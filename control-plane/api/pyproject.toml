@@ -1,0 +1,37 @@
+[project]
+name = "api"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "d3m0k1d", email = "contact@d3m0k1d.ru" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.143.0",
+    "pyjwt>=2.10.1",
+    "pwdlib[argon2]>=0.3.0",
+    "pydantic[email]>=2.12.5",
+    "psycopg[binary]>=3.3.6",
+    "sqlalchemy[asyncio]>=2.1.4",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.0",
+]
+
+[project.scripts]
+api = "api:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
