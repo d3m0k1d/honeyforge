@@ -1,0 +1,21 @@
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+COPY . .
+
+ENV CGO_ENABLED=0
+RUN --mount=type=cache,target=/go/pkg/mod \    --mount=type=cache,target=/root/.cache/go-build \
+  go build -ldflags='-s -w' -o /app
+FROM alpine:3.23.0
+
+WORKDIR /app
+
+COPY --from=builder /app /app
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app"]

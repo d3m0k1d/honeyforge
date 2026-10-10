@@ -1,0 +1,37 @@
+stages:
+  - linter
+  - tests
+  - build
+
+lineter-go:
+  stage: linter
+  image: golangci/golangco-lint:latest
+  script:
+    - golangci-lint run
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - '**/*.go'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      changes:
+        - '**/*.go'
+
+tests-go:
+  stage: tests
+  image: golang:latest
+  script:
+    - go test -v -race ./...
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+
+test-python:
+  stage: tests
+  image: python:latest
+  script:
+    - python
+build-go:
+  stage: build
+  needs:
+    - linter-go
+    - tests-go
