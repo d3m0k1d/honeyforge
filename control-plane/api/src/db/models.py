@@ -1,7 +1,25 @@
 from datetime import datetime
+from hashlib import sha256
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Table, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    String,
+    Table,
+    Text,
+    UniqueConstraint,
+    func,
+    true,
+)
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    mapped_column,
+    relationship,
+    validates,
+)
 
 
 class Base(DeclarativeBase):
@@ -42,6 +60,11 @@ class User(Base):
     roles: Mapped[list["Role"]] = relationship(
         secondary=user_roles, back_populates="users"
     )
+    honeytokens: Mapped[list["Honeytoken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
 
 class Role(Base):
@@ -65,3 +88,47 @@ class Permission(Base):
     roles: Mapped[list[Role]] = relationship(
         secondary=role_permissions, back_populates="permissions"
     )
+
+
+class Honeytoken(Base):
+    __tablename__ = "honeytokens"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_honeytokens_user_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(100))
+    description: Mapped[str | None] = mapped_column(Text)
+    file_name: Mapped[str] = mapped_column(String(255))
+    target_path: Mapped[str] = mapped_column(String(1024))
+    file_type: Mapped[str] = mapped_column(String(32), default="plain")
+    content_type: Mapped[str] = mapped_column(String(100), default="text/plain")
+    encoding: Mapped[str] = mapped_column(String(32), default="utf-8")
+    content: Mapped[str] = mapped_column(Text)
+    checksum_sha256: Mapped[str] = mapped_column(String(64))
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    user: Mapped[User] = relationship(back_populates="honeytokens")
+
+    @validates("content")
+    def update_checksum(self, _: str, content: str) -> str:
+        encoding = self.encoding or "utf-8"
+        self.checksum_sha256 = sha256(content.encode(encoding)).hexdigest()
+        return content
+
+    @validates("encoding")
+    def update_encoding(self, _: str, encoding: str) -> str:
+        content = getattr(self, "content", None)
+        if content is not None:
+            self.checksum_sha256 = sha256(content.encode(encoding)).hexdigest()
+        return encoding

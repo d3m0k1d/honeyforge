@@ -8,7 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.config import Settings
 from db.engine import engine
 from db.init import init_db
+from modules.auth.middleware import AuthenticationMiddleware
 from modules.auth.router import router as auth_router
+from modules.honeytokens.router import router as honeytokens_router
 
 
 @asynccontextmanager
@@ -19,6 +21,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="HoneypotForge API", lifespan=lifespan)
+app.add_middleware(AuthenticationMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=Settings.CORS_ORIGINS,
@@ -27,6 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router)
+app.include_router(honeytokens_router)
 
 
 @app.get("/health")

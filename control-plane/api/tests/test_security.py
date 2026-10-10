@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from core.config import Settings
 from db.models import Permission, Role, User
 from modules.auth.dependencies import require_permissions
+from modules.auth.middleware import PUBLIC_PATHS
 from modules.auth.schemas import PermissionName
 from modules.auth.security import (
     create_access_token,
@@ -86,3 +87,10 @@ def test_permission_dependency_rejects_missing_permission() -> None:
         asyncio.run(dependency(user))
 
     assert error.value.status_code == 403
+
+
+def test_authentication_middleware_public_paths_are_explicit() -> None:
+    assert "/auth/login" in PUBLIC_PATHS
+    assert "/auth/register" in PUBLIC_PATHS
+    assert "/auth/me" not in PUBLIC_PATHS
+    assert "/auth/roles" not in PUBLIC_PATHS

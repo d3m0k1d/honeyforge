@@ -8,7 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from db.engine import get_session
 from db.models import Role, User
-from modules.auth.dependencies import CurrentUser, require_permissions
+from modules.auth.dependencies import CurrentUser, requires
 from modules.auth.schemas import (
     LoginRequest,
     PermissionName,
@@ -119,10 +119,13 @@ async def me(user: CurrentUser) -> UserRead:
     return user_response(user)
 
 
-@router.get("/roles", response_model=list[RoleRead])
+@router.get(
+    "/roles",
+    response_model=list[RoleRead],
+    dependencies=requires(PermissionName.ROLES_READ),
+)
 async def list_roles(
     session: Session,
-    _: Annotated[User, Depends(require_permissions(PermissionName.ROLES_READ))],
 ) -> list[RoleRead]:
     roles = (
         await session.scalars(
@@ -138,12 +141,15 @@ async def list_roles(
     ]
 
 
-@router.put("/users/{user_id}/roles", response_model=UserRead)
+@router.put(
+    "/users/{user_id}/roles",
+    response_model=UserRead,
+    dependencies=requires(PermissionName.ROLES_MANAGE),
+)
 async def update_user_roles(
     user_id: int,
     payload: UserRolesUpdate,
     session: Session,
-    _: Annotated[User, Depends(require_permissions(PermissionName.ROLES_MANAGE))],
 ) -> UserRead:
     user = await load_user(session, user_id)
     if user is None:

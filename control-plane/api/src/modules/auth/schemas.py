@@ -11,6 +11,8 @@ class PermissionName(StrEnum):
     ROLES_MANAGE = "roles:manage"
     HONEYPOTS_READ = "honeypots:read"
     HONEYPOTS_MANAGE = "honeypots:manage"
+    HONEYTOKENS_READ = "honeytokens:read"
+    HONEYTOKENS_MANAGE = "honeytokens:manage"
     AGENTS_READ = "agents:read"
     AGENTS_MANAGE = "agents:manage"
     EVENTS_READ = "events:read"

@@ -12,12 +12,15 @@ ROLE_PERMISSIONS = {
     RoleName.OPERATOR: {
         PermissionName.HONEYPOTS_READ,
         PermissionName.HONEYPOTS_MANAGE,
+        PermissionName.HONEYTOKENS_READ,
+        PermissionName.HONEYTOKENS_MANAGE,
         PermissionName.AGENTS_READ,
         PermissionName.AGENTS_MANAGE,
         PermissionName.EVENTS_READ,
     },
     RoleName.VIEWER: {
         PermissionName.HONEYPOTS_READ,
+        PermissionName.HONEYTOKENS_READ,
         PermissionName.AGENTS_READ,
         PermissionName.EVENTS_READ,
     },

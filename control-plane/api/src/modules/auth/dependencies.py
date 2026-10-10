@@ -1,22 +1,21 @@
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any, TypeAlias
 
-import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.params import Depends as DependsParameter
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from db.engine import get_session
-from db.models import Role, User
+from db.models import User
+from modules.auth.access import user_from_access_token, user_permissions
 from modules.auth.schemas import PermissionName
-from modules.auth.security import decode_access_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> User:
@@ -25,21 +24,14 @@ async def get_current_user(
         detail="Invalid or expired access token",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    middleware_user = getattr(request.state, "user", None)
+    if middleware_user is not None:
+        return middleware_user
     if credentials is None:
         raise credentials_error
 
-    try:
-        user_id = decode_access_token(credentials.credentials)
-    except (jwt.InvalidTokenError, RuntimeError):
-        raise credentials_error from None
-
-    result = await session.execute(
-        select(User)
-        .where(User.id == user_id)
-        .options(selectinload(User.roles).selectinload(Role.permissions))
-    )
-    user = result.scalar_one_or_none()
-    if user is None or not user.is_active:
+    user = await user_from_access_token(session, credentials.credentials)
+    if user is None:
         raise credentials_error
     return user
 
@@ -51,9 +43,7 @@ def require_permissions(
     *required: PermissionName,
 ) -> Callable[[CurrentUser], Coroutine[Any, Any, User]]:
     async def dependency(user: CurrentUser) -> User:
-        granted = {
-            permission.name for role in user.roles for permission in role.permissions
-        }
+        granted = user_permissions(user)
         missing = set(required) - granted
         if missing:
             raise HTTPException(
@@ -63,3 +53,7 @@ def require_permissions(
         return user
 
     return dependency
+
+
+def requires(*required: PermissionName) -> list[DependsParameter]:
+    return [Depends(require_permissions(*required))]
