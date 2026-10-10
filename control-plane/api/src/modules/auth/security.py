@@ -5,7 +5,6 @@ from pwdlib import PasswordHash
 
 from core.config import Settings
 
-
 password_hash = PasswordHash.recommended()
 
 
@@ -32,16 +31,12 @@ def create_access_token(user_id: int) -> tuple[str, int]:
         "exp": now + timedelta(seconds=expires_in),
         "type": "access",
     }
-    token = jwt.encode(
-        payload, jwt_secret(), algorithm=Settings.JWT_ALGORITHM
-    )
+    token = jwt.encode(payload, jwt_secret(), algorithm=Settings.JWT_ALGORITHM)
     return token, expires_in
 
 
 def decode_access_token(token: str) -> int:
-    payload = jwt.decode(
-        token, jwt_secret(), algorithms=[Settings.JWT_ALGORITHM]
-    )
+    payload = jwt.decode(token, jwt_secret(), algorithms=[Settings.JWT_ALGORITHM])
     if payload.get("type") != "access":
         raise jwt.InvalidTokenError("Invalid token type")
 

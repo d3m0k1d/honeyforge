@@ -21,7 +21,6 @@ from modules.auth.schemas import (
 )
 from modules.auth.security import create_access_token, hash_password, verify_password
 
-
 router = APIRouter(prefix="/auth", tags=["auth"])
 Session: TypeAlias = Annotated[AsyncSession, Depends(get_session)]
 
@@ -52,9 +51,7 @@ async def load_user(session: AsyncSession, user_id: int) -> User | None:
     )
 
 
-@router.post(
-    "/register", response_model=UserRead, status_code=status.HTTP_201_CREATED
-)
+@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(payload: UserCreate, session: Session) -> UserRead:
     viewer = await session.scalar(
         select(Role)
@@ -125,9 +122,7 @@ async def me(user: CurrentUser) -> UserRead:
 @router.get("/roles", response_model=list[RoleRead])
 async def list_roles(
     session: Session,
-    _: Annotated[
-        User, Depends(require_permissions(PermissionName.ROLES_READ))
-    ],
+    _: Annotated[User, Depends(require_permissions(PermissionName.ROLES_READ))],
 ) -> list[RoleRead]:
     roles = (
         await session.scalars(
@@ -148,13 +143,13 @@ async def update_user_roles(
     user_id: int,
     payload: UserRolesUpdate,
     session: Session,
-    _: Annotated[
-        User, Depends(require_permissions(PermissionName.ROLES_MANAGE))
-    ],
+    _: Annotated[User, Depends(require_permissions(PermissionName.ROLES_MANAGE))],
 ) -> UserRead:
     user = await load_user(session, user_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        )
 
     roles = (
         await session.scalars(
@@ -164,7 +159,9 @@ async def update_user_roles(
         )
     ).all()
     if len(roles) != len(payload.roles):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown role")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown role"
+        )
 
     user.roles = list(roles)
     await session.commit()

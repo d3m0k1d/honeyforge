@@ -1,37 +1,35 @@
 stages:
-  - linter
-  - tests
-  - build
+  - lint
+  - test
 
-lineter-go:
-  stage: linter
-  image: golangci/golangco-lint:latest
-  script:
-    - golangci-lint run
+workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-      changes:
-        - '**/*.go'
-    - if: '$CI_COMMIT_BRANCH == "master"'
-      changes:
-        - '**/*.go'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
-tests-go:
-  stage: tests
-  image: golang:latest
-  script:
-    - go test -v -race ./...
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "master"'
+default:
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+  cache:
+    key:
+      files:
+        - control-plane/api/pyproject.toml
+        - agent/pyproject.toml
+    paths:
+      - .cache/uv
+  variables:
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
 
-test-python:
-  stage: tests
-  image: python:latest
+python-lint:
+  stage: lint
   script:
-    - python
-build-go:
-  stage: build
-  needs:
-    - linter-go
-    - tests-go
+    - cd control-plane/api
+    - uvx --from ruff==0.17.0 ruff check --config pyproject.toml src tests ../../agent/src
+    - uvx --from ruff==0.17.0 ruff format --check --config pyproject.toml src tests ../../agent/src
+
+python-tests:
+  stage: test
+  before_script:
+    - cd control-plane/api
+    - uv sync --dev
+  script:
+    - uv run pytest -q

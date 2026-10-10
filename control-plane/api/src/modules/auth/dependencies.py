@@ -13,7 +13,6 @@ from db.models import Role, User
 from modules.auth.schemas import PermissionName
 from modules.auth.security import decode_access_token
 
-
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
@@ -53,9 +52,7 @@ def require_permissions(
 ) -> Callable[[CurrentUser], Coroutine[Any, Any, User]]:
     async def dependency(user: CurrentUser) -> User:
         granted = {
-            permission.name
-            for role in user.roles
-            for permission in role.permissions
+            permission.name for role in user.roles for permission in role.permissions
         }
         missing = set(required) - granted
         if missing:

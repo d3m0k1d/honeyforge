@@ -7,7 +7,6 @@ from db.models import Base, Permission, Role, User
 from modules.auth.schemas import PermissionName, RoleName
 from modules.auth.security import hash_password
 
-
 ROLE_PERMISSIONS = {
     RoleName.ADMIN: set(PermissionName),
     RoleName.OPERATOR: {
@@ -41,9 +40,7 @@ async def init_db() -> None:
     async with async_session() as session:
         permissions = {
             permission.name: permission
-            for permission in (
-                await session.scalars(select(Permission))
-            ).all()
+            for permission in (await session.scalars(select(Permission))).all()
         }
         for name in PermissionName:
             if name not in permissions:
