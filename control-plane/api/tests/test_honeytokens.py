@@ -5,7 +5,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import configure_mappers
 
 from db.init import ROLE_PERMISSIONS
-from db.models import Base, Honeytoken, User
+from db.models import Agent, Base, Honeytoken, User
 from modules.auth.schemas import PermissionName, RoleName
 from modules.honeytokens.schemas import HoneytokenCreate, HoneytokenFileType
 
@@ -24,6 +24,20 @@ def test_honeytoken_model_is_mapped() -> None:
         "checksum_sha256",
     } <= set(table.columns.keys())
     assert User.honeytokens.property.back_populates == "user"
+
+
+def test_agent_enrollment_model_is_mapped() -> None:
+    configure_mappers()
+
+    table = Base.metadata.tables["agents"]
+    assert {
+        "external_id",
+        "enrollment_token_hash",
+        "enrollment_expires_at",
+        "enrolled_at",
+        "last_heartbeat_at",
+    } <= set(table.columns.keys())
+    assert Agent.created_by.property.back_populates == "created_agents"
 
 
 def test_honeytoken_updates_checksum_with_content() -> None:

@@ -33,12 +33,39 @@ services:
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      MTLS_DIR: /var/lib/honeypotforge/mtls
+      SERVER_COMMON_NAME: api
+      SERVER_SAN: DNS:api,DNS:localhost,IP:127.0.0.1
+      AGENT_GATEWAY_TOKEN: ${AGENT_GATEWAY_TOKEN:?AGENT_GATEWAY_TOKEN must contain at least 32 characters}
     ports:
       - "${API_PORT:-8000}:8000"
+    volumes:
+      - mtls_data:/var/lib/honeypotforge/mtls
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
+  agent-gateway:
+    image: nginx:1.29-alpine
+    environment:
+      AGENT_GATEWAY_TOKEN: ${AGENT_GATEWAY_TOKEN:?AGENT_GATEWAY_TOKEN must contain at least 32 characters}
+      NGINX_ENVSUBST_FILTER: AGENT_GATEWAY_TOKEN
+    ports:
+      - "${AGENT_MTLS_PORT:-8443}:8443"
+    volumes:
+      - ./control-plane/agent-gateway/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - mtls_data:/etc/honeypotforge/mtls:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  mtls_data:

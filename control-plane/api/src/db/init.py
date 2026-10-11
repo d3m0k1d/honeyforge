@@ -30,6 +30,8 @@ ROLE_PERMISSIONS = {
 async def init_db() -> None:
     if not Settings.JWT_SECRET or len(Settings.JWT_SECRET) < 32:
         raise RuntimeError("JWT_SECRET must contain at least 32 characters")
+    if not Settings.AGENT_GATEWAY_TOKEN or len(Settings.AGENT_GATEWAY_TOKEN) < 32:
+        raise RuntimeError("AGENT_GATEWAY_TOKEN must contain at least 32 characters")
     if bool(Settings.INITIAL_ADMIN_EMAIL) != bool(Settings.INITIAL_ADMIN_PASSWORD):
         raise RuntimeError(
             "INITIAL_ADMIN_EMAIL and INITIAL_ADMIN_PASSWORD must be set together"
