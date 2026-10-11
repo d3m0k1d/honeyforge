@@ -35,7 +35,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
+        if (
+            request.method == "OPTIONS"
+            or request.url.path in PUBLIC_PATHS
+            or request.url.path.startswith("/agents/commands/")
+        ):
             return await call_next(request)
 
         scheme, token = get_authorization_scheme_param(

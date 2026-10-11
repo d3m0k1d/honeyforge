@@ -1,15 +1,22 @@
 from datetime import datetime
 from hashlib import sha256
+from typing import Any
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
     ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
     String,
     Table,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
     true,
 )
@@ -66,6 +73,10 @@ class User(Base):
         passive_deletes=True,
     )
     created_agents: Mapped[list["Agent"]] = relationship(back_populates="created_by")
+    deployment_artifacts: Mapped[list["DeploymentArtifact"]] = relationship(
+        back_populates="created_by"
+    )
+    deployments: Mapped[list["Deployment"]] = relationship(back_populates="created_by")
 
 
 class Role(Base):
@@ -111,6 +122,120 @@ class Agent(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     created_by: Mapped[User | None] = relationship(back_populates="created_agents")
+    deployments: Mapped[list["Deployment"]] = relationship(back_populates="agent")
+    commands: Mapped[list["DeploymentCommand"]] = relationship(back_populates="agent")
+
+
+class DeploymentArtifact(Base):
+    __tablename__ = "deployment_artifacts"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(32))
+    entrypoint: Mapped[str] = mapped_column(String(255))
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_by: Mapped[User | None] = relationship(
+        back_populates="deployment_artifacts"
+    )
+
+
+class Deployment(Base):
+    __tablename__ = "deployments"
+    __table_args__ = (Index("ix_deployments_agent_state", "agent_id", "desired_state"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100))
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="RESTRICT"), index=True
+    )
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    honeypot_type: Mapped[str] = mapped_column(String(100))
+    definition_version: Mapped[int] = mapped_column(Integer, default=1)
+    level: Mapped[str] = mapped_column(String(16))
+    driver: Mapped[str] = mapped_column(String(32))
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    desired_state: Mapped[str] = mapped_column(String(32), default="running")
+    observed_state: Mapped[str] = mapped_column(String(32), default="pending")
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    agent: Mapped[Agent] = relationship(back_populates="deployments")
+    created_by: Mapped[User | None] = relationship(back_populates="deployments")
+    commands: Mapped[list["DeploymentCommand"]] = relationship(
+        back_populates="deployment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    snapshots: Mapped[list["DeploymentSnapshot"]] = relationship(
+        back_populates="deployment",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class DeploymentSnapshot(Base):
+    __tablename__ = "deployment_snapshots"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    deployment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("deployments.id", ondelete="CASCADE"), index=True
+    )
+    type: Mapped[str] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), default="creating")
+    path: Mapped[str | None] = mapped_column(String(1024))
+    size_bytes: Mapped[int | None] = mapped_column(Integer)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deployment: Mapped[Deployment] = relationship(back_populates="snapshots")
+
+
+class DeploymentCommand(Base):
+    __tablename__ = "deployment_commands"
+    __table_args__ = (
+        Index("ix_commands_agent_status_created", "agent_id", "status", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    deployment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("deployments.id", ondelete="CASCADE"), index=True
+    )
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    type: Mapped[str] = mapped_column(String(32))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    generation: Mapped[int] = mapped_column(Integer)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deployment: Mapped[Deployment] = relationship(back_populates="commands")
+    agent: Mapped[Agent] = relationship(back_populates="commands")
 
 
 class Honeytoken(Base):

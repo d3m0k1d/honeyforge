@@ -15,6 +15,8 @@ class PermissionName(StrEnum):
     HONEYTOKENS_MANAGE = "honeytokens:manage"
     AGENTS_READ = "agents:read"
     AGENTS_MANAGE = "agents:manage"
+    DEPLOYMENTS_READ = "deployments:read"
+    DEPLOYMENTS_MANAGE = "deployments:manage"
     EVENTS_READ = "events:read"
 
 

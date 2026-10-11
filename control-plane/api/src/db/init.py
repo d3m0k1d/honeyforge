@@ -16,12 +16,15 @@ ROLE_PERMISSIONS = {
         PermissionName.HONEYTOKENS_MANAGE,
         PermissionName.AGENTS_READ,
         PermissionName.AGENTS_MANAGE,
+        PermissionName.DEPLOYMENTS_READ,
+        PermissionName.DEPLOYMENTS_MANAGE,
         PermissionName.EVENTS_READ,
     },
     RoleName.VIEWER: {
         PermissionName.HONEYPOTS_READ,
         PermissionName.HONEYTOKENS_READ,
         PermissionName.AGENTS_READ,
+        PermissionName.DEPLOYMENTS_READ,
         PermissionName.EVENTS_READ,
     },
 }

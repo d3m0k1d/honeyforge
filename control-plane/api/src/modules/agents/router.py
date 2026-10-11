@@ -10,7 +10,6 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from fastapi import (
     APIRouter,
     Depends,
-    Header,
     HTTPException,
     Path,
     Response,
@@ -23,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import Settings
 from db.engine import get_session
 from db.models import Agent
+from modules.agents.dependencies import GatewayAgent
 from modules.agents.schemas import (
     AGENT_ID_PATTERN,
     AgentEnroll,
@@ -209,48 +209,8 @@ async def download_agent_certificate(
 @router.post("/heartbeat", response_model=AgentHeartbeatRead)
 async def agent_heartbeat(
     session: Session,
-    gateway_token: Annotated[str | None, Header(alias="X-Agent-Gateway-Token")] = None,
-    certificate_verified: Annotated[
-        str | None, Header(alias="X-Agent-Certificate-Verified")
-    ] = None,
-    certificate_subject: Annotated[
-        str | None, Header(alias="X-Agent-Certificate-Subject")
-    ] = None,
+    agent: GatewayAgent,
 ) -> AgentHeartbeatRead:
-    expected_token = Settings.AGENT_GATEWAY_TOKEN
-    if (
-        expected_token is None
-        or gateway_token is None
-        or not secrets.compare_digest(gateway_token, expected_token)
-        or certificate_verified != "SUCCESS"
-        or certificate_subject is None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Valid client certificate required",
-        )
-
-    common_names = [
-        part[3:] for part in certificate_subject.split(",") if part.startswith("CN=")
-    ]
-    if len(common_names) != 1:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Valid client certificate required",
-        )
-
-    agent = await session.scalar(
-        select(Agent).where(
-            Agent.external_id == common_names[0],
-            Agent.enrolled_at.is_not(None),
-        )
-    )
-    if agent is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unknown agent certificate",
-        )
-
     agent.last_heartbeat_at = datetime.now(UTC)
     await session.commit()
     return AgentHeartbeatRead(

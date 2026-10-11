@@ -18,6 +18,13 @@ server {
         proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
     }
 
+    location /commands/ {
+        proxy_pass http://api:8000/agents/commands/;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
     location / {
         return 404;
     }
