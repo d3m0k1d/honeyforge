@@ -1,4 +1,3 @@
-from pydantic import BaseModel
 from datetime import datetime
 from hashlib import sha256
 
