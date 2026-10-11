@@ -1,0 +1,24 @@
+server {
+    listen 8443 ssl;
+    server_name _;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_certificate /etc/honeypotforge/mtls/server/server.crt;
+    ssl_certificate_key /etc/honeypotforge/mtls/server/server.key;
+    ssl_client_certificate /etc/honeypotforge/mtls/ca/ca.crt;
+    ssl_verify_client on;
+    ssl_verify_depth 1;
+
+    location = /heartbeat {
+        proxy_pass http://api:8000/agents/heartbeat;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location / {
+        return 404;
+    }
+}

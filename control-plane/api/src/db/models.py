@@ -65,6 +65,7 @@ class User(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    created_agents: Mapped[list["Agent"]] = relationship(back_populates="created_by")
 
 
 class Role(Base):
@@ -88,6 +89,28 @@ class Permission(Base):
     roles: Mapped[list[Role]] = relationship(
         secondary=role_permissions, back_populates="permissions"
     )
+
+
+class Agent(Base):
+    __tablename__ = "agents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    external_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    enrollment_token_hash: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True
+    )
+    enrollment_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    enrolled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_by: Mapped[User | None] = relationship(back_populates="created_agents")
 
 
 class Honeytoken(Base):

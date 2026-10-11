@@ -1,4 +1,5 @@
 from os import getenv
+from pathlib import Path
 
 
 class Settings:
@@ -27,3 +28,6 @@ class Settings:
         for origin in getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
         if origin.strip()
     ]
+
+    MTLS_DIR = Path(getenv("MTLS_DIR", "/var/lib/honeypotforge/mtls"))
+    AGENT_GATEWAY_TOKEN = getenv("AGENT_GATEWAY_TOKEN")

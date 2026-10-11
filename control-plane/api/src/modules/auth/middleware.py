@@ -11,6 +11,8 @@ from modules.auth.access import user_from_access_token, user_permissions
 PUBLIC_PATHS = {
     "/auth/login",
     "/auth/register",
+    "/agents/enroll",
+    "/agents/heartbeat",
     "/docs",
     "/docs/oauth2-redirect",
     "/health",

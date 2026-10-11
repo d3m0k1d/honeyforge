@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.config import Settings
 from db.engine import engine
 from db.init import init_db
+from modules.agents.router import router as agents_router
 from modules.auth.middleware import AuthenticationMiddleware
 from modules.auth.router import router as auth_router
 from modules.honeytokens.router import router as honeytokens_router
@@ -31,6 +32,7 @@ app.add_middleware(
 )
 app.include_router(auth_router)
 app.include_router(honeytokens_router)
+app.include_router(agents_router)
 
 
 @app.get("/health")
