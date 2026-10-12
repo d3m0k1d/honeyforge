@@ -128,6 +128,7 @@ def enqueue_command(
         type=command_type,
         payload=payload,
         generation=deployment.generation,
+        created_at=datetime.now(UTC),
     )
     session.add(command)
     return command
@@ -233,8 +234,11 @@ async def create_deployment(
                 raise HTTPException(
                     status_code=422, detail="Invalid provisioning artifact ID"
                 ) from None
-            if await session.get(DeploymentArtifact, artifact_id) is None:
+            artifact = await session.get(DeploymentArtifact, artifact_id)
+            if artifact is None:
                 raise HTTPException(status_code=404, detail="Artifact not found")
+            config["provisioning_kind"] = artifact.kind
+            config["provisioning_entrypoint"] = artifact.entrypoint
 
     deployment = Deployment(
         name=payload.name,
@@ -249,12 +253,23 @@ async def create_deployment(
     session.add(deployment)
     await session.flush()
     deployment.agent = agent
-    enqueue_command(
+    deploy_command = enqueue_command(
         session,
         deployment,
         "deploy",
         {"create_clean_snapshot": deployment.level == "high"},
     )
+    if deployment.level == "high":
+        clean_snapshot = DeploymentSnapshot(deployment_id=deployment.id, type="clean")
+        session.add(clean_snapshot)
+        await session.flush()
+        clean_command = enqueue_command(
+            session,
+            deployment,
+            "vm.snapshot",
+            {"snapshot_id": str(clean_snapshot.id), "snapshot_type": "clean"},
+        )
+        clean_command.created_at = deploy_command.created_at + timedelta(microseconds=1)
     await session.commit()
     await session.refresh(deployment)
     deployment.agent = agent
@@ -371,19 +386,43 @@ async def reset_deployment(
     deployment = await load_deployment(session, deployment_id)
     if deployment.level != "high":
         raise HTTPException(status_code=409, detail="Reset requires high level")
+    clean_snapshot = await session.scalar(
+        select(DeploymentSnapshot)
+        .where(
+            DeploymentSnapshot.deployment_id == deployment.id,
+            DeploymentSnapshot.type == "clean",
+            DeploymentSnapshot.state == "ready",
+        )
+        .order_by(DeploymentSnapshot.ready_at.desc())
+        .limit(1)
+    )
+    if clean_snapshot is None:
+        raise HTTPException(status_code=409, detail="No ready clean snapshot")
     deployment.generation += 1
-    snapshot_id = None
+    incident_command: DeploymentCommand | None = None
     if payload.preserve_incident:
         snapshot = DeploymentSnapshot(deployment_id=deployment.id, type="incident")
         session.add(snapshot)
         await session.flush()
-        snapshot_id = str(snapshot.id)
-    enqueue_command(
+        incident_command = enqueue_command(
+            session,
+            deployment,
+            "vm.snapshot",
+            {"snapshot_id": str(snapshot.id), "snapshot_type": "incident"},
+        )
+    reset_command = enqueue_command(
         session,
         deployment,
         "vm.reset",
-        {"preserve_incident": payload.preserve_incident, "snapshot_id": snapshot_id},
+        {
+            "preserve_incident": payload.preserve_incident,
+            "snapshot_id": str(clean_snapshot.id),
+        },
     )
+    if incident_command is not None:
+        reset_command.created_at = incident_command.created_at + timedelta(
+            microseconds=1
+        )
     await session.commit()
     await session.refresh(deployment)
     return deployment_response(deployment)
@@ -542,10 +581,15 @@ async def report_command_result(
                 deployment.last_error = None
 
     snapshot_id = command.payload.get("snapshot_id")
-    if snapshot_id and payload.status in {
-        CommandStatus.SUCCEEDED,
-        CommandStatus.FAILED,
-    }:
+    if (
+        command.type == "vm.snapshot"
+        and snapshot_id
+        and payload.status
+        in {
+            CommandStatus.SUCCEEDED,
+            CommandStatus.FAILED,
+        }
+    ):
         snapshot = await session.get(DeploymentSnapshot, UUID(snapshot_id))
         if snapshot is not None:
             snapshot.state = (

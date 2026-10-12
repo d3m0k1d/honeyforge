@@ -17,7 +17,12 @@ class PermissionName(StrEnum):
     AGENTS_MANAGE = "agents:manage"
     DEPLOYMENTS_READ = "deployments:read"
     DEPLOYMENTS_MANAGE = "deployments:manage"
+    PROFILES_READ = "profiles:read"
+    PROFILES_MANAGE = "profiles:manage"
     EVENTS_READ = "events:read"
+    AUDIT_READ = "audit:read"
+    ALERTS_READ = "alerts:read"
+    ALERTS_MANAGE = "alerts:manage"
 
 
 class RoleName(StrEnum):

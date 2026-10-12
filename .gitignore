@@ -3,3 +3,4 @@ __pycache__/
 *$py.class
 uv.lock
 .env
+qemu-images/

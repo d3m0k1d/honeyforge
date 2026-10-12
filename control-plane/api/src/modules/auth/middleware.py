@@ -1,11 +1,13 @@
 from collections.abc import Awaitable, Callable
 
 from fastapi.security.utils import get_authorization_scheme_param
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from db.engine import async_session
+from db.models import AuditLog
 from modules.auth.access import user_from_access_token, user_permissions
 
 PUBLIC_PATHS = {
@@ -13,6 +15,8 @@ PUBLIC_PATHS = {
     "/auth/register",
     "/agents/enroll",
     "/agents/heartbeat",
+    "/agents/config",
+    "/agents/events",
     "/docs",
     "/docs/oauth2-redirect",
     "/health",
@@ -56,4 +60,21 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         granted = user_permissions(user)
         request.state.user = user
         request.state.permissions = granted
-        return await call_next(request)
+        response = await call_next(request)
+        if request.method not in {"GET", "HEAD"}:
+            async with async_session() as session:
+                session.add(
+                    AuditLog(
+                        user_id=user.id,
+                        method=request.method,
+                        path=request.url.path,
+                        status_code=response.status_code,
+                        client_ip=request.client.host if request.client else None,
+                        user_agent=request.headers.get("User-Agent"),
+                    )
+                )
+                try:
+                    await session.commit()
+                except SQLAlchemyError:
+                    await session.rollback()
+        return response

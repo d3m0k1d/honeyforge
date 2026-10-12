@@ -9,10 +9,14 @@ from core.config import Settings
 from db.engine import engine
 from db.init import init_db
 from modules.agents.router import router as agents_router
+from modules.alerts.router import router as alerts_router
+from modules.audit.router import router as audit_router
 from modules.auth.middleware import AuthenticationMiddleware
 from modules.auth.router import router as auth_router
 from modules.deployments.router import router as deployments_router
+from modules.events.router import router as events_router
 from modules.honeytokens.router import router as honeytokens_router
+from modules.profiles.router import router as profiles_router
 
 
 @asynccontextmanager
@@ -35,6 +39,10 @@ app.include_router(auth_router)
 app.include_router(honeytokens_router)
 app.include_router(agents_router)
 app.include_router(deployments_router)
+app.include_router(profiles_router)
+app.include_router(events_router)
+app.include_router(audit_router)
+app.include_router(alerts_router)
 
 
 @app.get("/health")

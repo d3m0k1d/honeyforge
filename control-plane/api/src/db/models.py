@@ -77,6 +77,10 @@ class User(Base):
         back_populates="created_by"
     )
     deployments: Mapped[list["Deployment"]] = relationship(back_populates="created_by")
+    profiles: Mapped[list["HoneypotProfile"]] = relationship(
+        back_populates="created_by"
+    )
+    alert_rules: Mapped[list["AlertRule"]] = relationship(back_populates="created_by")
 
 
 class Role(Base):
@@ -102,6 +106,24 @@ class Permission(Base):
     )
 
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_created_user", "created_at", "user_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    method: Mapped[str] = mapped_column(String(8))
+    path: Mapped[str] = mapped_column(String(1024))
+    status_code: Mapped[int] = mapped_column(Integer)
+    client_ip: Mapped[str | None] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -124,6 +146,124 @@ class Agent(Base):
     created_by: Mapped[User | None] = relationship(back_populates="created_agents")
     deployments: Mapped[list["Deployment"]] = relationship(back_populates="agent")
     commands: Mapped[list["DeploymentCommand"]] = relationship(back_populates="agent")
+    configuration: Mapped["AgentConfiguration | None"] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    events: Mapped[list["AgentEvent"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+
+
+class AgentConfiguration(Base):
+    __tablename__ = "agent_configurations"
+
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON)
+    profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("honeypot_profiles.id", ondelete="SET NULL"), index=True
+    )
+    agent: Mapped[Agent] = relationship(back_populates="configuration")
+    profile: Mapped["HoneypotProfile | None"] = relationship(
+        back_populates="configurations"
+    )
+
+
+class AgentEvent(Base):
+    __tablename__ = "agent_events"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "event_id", name="uq_agent_events_external_id"),
+        Index("ix_agent_events_agent_ts", "agent_id", "ts"),
+        Index("ix_agent_events_src_event", "src", "event"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    service: Mapped[str] = mapped_column(String(256))
+    level: Mapped[str | None] = mapped_column(String(64))
+    src: Mapped[str | None] = mapped_column(String(512))
+    event: Mapped[str] = mapped_column(String(256))
+    rule: Mapped[str | None] = mapped_column(String(256))
+    data: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    agent: Mapped[Agent] = relationship(back_populates="events")
+
+
+class HoneypotProfile(Base):
+    __tablename__ = "honeypot_profiles"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    level: Mapped[str] = mapped_column(String(16))
+    services: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    logging: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    masking: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    honeytoken_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    created_by: Mapped[User | None] = relationship(back_populates="profiles")
+    configurations: Mapped[list[AgentConfiguration]] = relationship(
+        back_populates="profile"
+    )
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rules"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    event: Mapped[str] = mapped_column(String(256))
+    service: Mapped[str | None] = mapped_column(String(256))
+    threshold: Mapped[int] = mapped_column(Integer)
+    window_seconds: Mapped[int] = mapped_column(Integer)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    created_by: Mapped[User | None] = relationship(back_populates="alert_rules")
+    alerts: Mapped[list["Alert"]] = relationship(
+        back_populates="rule", cascade="all, delete-orphan"
+    )
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+    __table_args__ = (Index("ix_alerts_triggered_ack", "triggered_at", "acknowledged"),)
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    rule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("alert_rules.id", ondelete="CASCADE"), index=True
+    )
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str | None] = mapped_column(String(512))
+    event_count: Mapped[int] = mapped_column(Integer)
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    acknowledged: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false"
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rule: Mapped[AlertRule] = relationship(back_populates="alerts")
+    agent: Mapped[Agent] = relationship()
 
 
 class DeploymentArtifact(Base):

@@ -8,6 +8,23 @@ server {
     ssl_client_certificate /etc/honeypotforge/mtls/ca/ca.crt;
     ssl_verify_client on;
     ssl_verify_depth 1;
+    client_max_body_size 2m;
+
+    location = /config {
+        limit_except GET { deny all; }
+        proxy_pass http://api:8000/agents/config;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /events {
+        limit_except POST { deny all; }
+        proxy_pass http://api:8000/agents/events;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
 
     location = /heartbeat {
         proxy_pass http://api:8000/agents/heartbeat;
@@ -27,5 +44,23 @@ server {
 
     location / {
         return 404;
+    }
+}
+
+server {
+    listen 8444 ssl;
+    server_name _;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_certificate /etc/honeypotforge/mtls/server/server.crt;
+    ssl_certificate_key /etc/honeypotforge/mtls/server/server.key;
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://api:8000;
+        proxy_read_timeout 75s;
+        proxy_set_header X-Agent-Gateway-Token "";
+        proxy_set_header X-Agent-Certificate-Verified "";
+        proxy_set_header X-Agent-Certificate-Subject "";
     }
 }

@@ -1,21 +1,45 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 
 WORKDIR /app
 
-COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY go.mod ./
 
 COPY . .
 
 ENV CGO_ENABLED=0
-RUN --mount=type=cache,target=/go/pkg/mod \    --mount=type=cache,target=/root/.cache/go-build \
-  go build -ldflags='-s -w' -o /app
-FROM alpine:3.23.0
+RUN --mount=type=cache,target=/root/.cache/go-build \
+  go build -ldflags='-s -w' -o /agent ./cmd/agent
+FROM alpine:3.23.0 AS runtime
 
 WORKDIR /app
 
-COPY --from=builder /app /app
+RUN mkdir -p /var/lib/honeypot-agent \
+    && chown 65532:65532 /var/lib/honeypot-agent
+COPY --from=builder /agent /usr/local/bin/agent
+COPY configs/config.example.json ./configs/config.json
 
-EXPOSE 8080
+USER 65532:65532
 
-ENTRYPOINT ["/app"]
+ENTRYPOINT ["/usr/local/bin/agent"]
+
+FROM debian:bookworm-slim AS qemu-runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cloud-image-utils \
+        libguestfs-tools \
+        qemu-system-x86 \
+        qemu-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 65532 --home-dir /var/lib/honeypot-agent agent \
+    && mkdir -p /var/lib/honeypot-agent /var/lib/honeypot-images \
+    && chown -R 65532:65532 /var/lib/honeypot-agent
+
+COPY --from=builder /agent /usr/local/bin/agent
+
+USER 65532:65532
+
+ENTRYPOINT ["/usr/local/bin/agent"]
+
+FROM runtime AS final

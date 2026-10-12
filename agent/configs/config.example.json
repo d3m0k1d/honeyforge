@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "log": {
+    "output": "stdout"
+  },
+  "services": [
+    { "type": "ssh",        "listen": ":2222" },
+    { "type": "ftp",        "listen": ":2121", "params": { "pasv_ip": "10.0.0.5" } },
+    { "type": "smtp",       "listen": ":2525", "params": { "hostname": "mail.example.com" } },
+    { "type": "telnet",     "listen": ":2323" },
+    { "type": "pop3",       "listen": ":1110" },
+    { "type": "imap",       "listen": ":1143" },
+    { "type": "irc",        "listen": ":6667", "params": { "hostname": "irc.example.com" } },
+    { "type": "nntp",       "listen": ":8119" },
+    { "type": "rsync",      "listen": ":8873" },
+    { "type": "vnc",        "listen": ":5901", "level": "low" },
+    { "type": "memcached",  "listen": ":11211" },
+    { "type": "redis",      "listen": ":6379", "params": { "requirepass": "changeme" } },
+    { "type": "mysql",      "listen": ":3307", "params": { "server_version": "8.0.35" } },
+    { "type": "postgres",   "listen": ":5433", "params": { "server_version": "16.3" } },
+
+    { "type": "nginx",      "listen": ":8080", "params": { "server": "nginx/1.25.2" } },
+    { "type": "apache",     "listen": ":8081" },
+    { "type": "grafana",    "listen": ":3000" },
+    { "type": "jenkins",    "listen": ":8082" },
+    { "type": "docker",     "listen": ":2375" },
+    { "type": "kubernetes", "listen": ":6443" },
+    { "type": "elasticsearch", "listen": ":9200" },
+    { "type": "prometheus", "listen": ":9090" },
+    { "type": "webmin",     "listen": ":10000" },
+    { "type": "hikvision",  "listen": ":8000" },
+
+    {
+      "type": "line",
+      "name": "example-custom",
+      "listen": "127.0.0.1:9099",
+      "greeting": "custom service ready\r\n",
+      "rules": [
+        {
+          "name": "hello",
+          "pattern": "(?i)^hello\\s+(?P<who>\\S+)",
+          "response": "hi {who}\r\n"
+        },
+        {
+          "name": "login",
+          "pattern": "(?i)^login\\s+(?P<username>\\S+)\\s+(?P<password>\\S+)",
+          "response": "ok\r\n",
+          "capture": ["username", "password"],
+          "event": "auth"
+        }
+      ]
+    }
+  ]
+}

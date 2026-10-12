@@ -18,14 +18,20 @@ ROLE_PERMISSIONS = {
         PermissionName.AGENTS_MANAGE,
         PermissionName.DEPLOYMENTS_READ,
         PermissionName.DEPLOYMENTS_MANAGE,
+        PermissionName.PROFILES_READ,
+        PermissionName.PROFILES_MANAGE,
         PermissionName.EVENTS_READ,
+        PermissionName.ALERTS_READ,
+        PermissionName.ALERTS_MANAGE,
     },
     RoleName.VIEWER: {
         PermissionName.HONEYPOTS_READ,
         PermissionName.HONEYTOKENS_READ,
         PermissionName.AGENTS_READ,
         PermissionName.DEPLOYMENTS_READ,
+        PermissionName.PROFILES_READ,
         PermissionName.EVENTS_READ,
+        PermissionName.ALERTS_READ,
     },
 }
 
