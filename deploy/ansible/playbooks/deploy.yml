@@ -1,0 +1,6 @@
+---
+- name: Deploy HoneypotForge test stand
+  hosts: test
+  become: true
+  roles:
+    - honeypotforge

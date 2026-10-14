@@ -1,36 +1,87 @@
 stages:
-  - lint
-  - test
+  - quality
+  - deploy
 
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
 
-variables:
-  UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
+go-quality:
+  stage: quality
+  image: golang:1.27.1-bookworm
+  cache:
+    key:
+      files:
+        - agent/go.mod
+    paths:
+      - .cache/go-build
+  variables:
+    GOCACHE: $CI_PROJECT_DIR/.cache/go-build
+  before_script:
+    - cd agent
+  script:
+    - go test -race -shuffle=on ./...
+    - go vet ./...
 
-default:
+api-quality:
+  stage: quality
   image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
   cache:
     key:
       files:
         - control-plane/api/pyproject.toml
-        - agent/pyproject.toml
     paths:
       - .cache/uv
-
-python-lint:
-  stage: lint
-  script:
-    - cd control-plane/api
-    - uvx --from ruff==0.17.0 ruff check --config pyproject.toml src tests ../../agent/src
-    - uvx --from ruff==0.17.0 ruff format --check --config pyproject.toml src tests ../../agent/src
-
-python-tests:
-  stage: test
+  variables:
+    UV_CACHE_DIR: $CI_PROJECT_DIR/.cache/uv
   before_script:
     - cd control-plane/api
     - uv sync --dev
   script:
+    - uv run ruff check src tests
     - uv run pytest -q
+
+frontend-quality:
+  stage: quality
+  image: node:22-alpine
+  cache:
+    key:
+      files:
+        - control-plane/frontend/package-lock.json
+    paths:
+      - .npm/
+  variables:
+    npm_config_cache: $CI_PROJECT_DIR/.npm
+  before_script:
+    - cd control-plane/frontend
+  script:
+    - npm ci
+    - npm run build
+
+deploy-test:
+  stage: deploy
+  image: alpine/ansible:latest
+  tags:
+    - proxomox
+  needs:
+    - go-quality
+    - api-quality
+    - frontend-quality
+  resource_group: honeypotforge-test
+  environment:
+    name: test
+    url: https://test.d3m0k1d.ru
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+  before_script:
+    - test -n "$VAULT_PASSWORD"
+    - apk add --no-cache openssh-client rsync sshpass
+    - install -m 0600 /dev/null .vault-pass
+    - printf '%s' "$VAULT_PASSWORD" > .vault-pass
+    - trap 'rm -f .vault-pass' EXIT
+    - ANSIBLE_CONFIG=deploy/ansible/ansible.cfg ansible-galaxy collection install -r deploy/ansible/requirements.yml
+  script:
+    - HONEYPOTFORGE_SOURCE_DIR="$CI_PROJECT_DIR" ANSIBLE_CONFIG=deploy/ansible/ansible.cfg ansible-playbook deploy/ansible/playbooks/deploy.yml --vault-password-file .vault-pass
+  after_script:
+    - rm -f .vault-pass

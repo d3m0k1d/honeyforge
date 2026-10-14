@@ -1,0 +1,26 @@
+[
+  {
+    "id": "user_test_admin",
+    "login": "{{ honeypotforge_initial_admin_email }}",
+    "password": "{{ honeypotforge_initial_admin_password }}",
+    "roles": ["admin"],
+    "isAdmin": true,
+    "createdAt": "2026-10-14T00:00:00.000Z"
+  },
+  {
+    "id": "user_test_operator",
+    "login": "{{ honeypotforge_operator_email }}",
+    "password": "{{ honeypotforge_operator_password }}",
+    "roles": ["operator"],
+    "isAdmin": false,
+    "createdAt": "2026-10-14T00:00:00.000Z"
+  },
+  {
+    "id": "user_test_viewer",
+    "login": "{{ honeypotforge_viewer_email }}",
+    "password": "{{ honeypotforge_viewer_password }}",
+    "roles": ["viewer"],
+    "isAdmin": false,
+    "createdAt": "2026-10-14T00:00:00.000Z"
+  }
+]
