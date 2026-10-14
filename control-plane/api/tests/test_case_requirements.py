@@ -157,6 +157,8 @@ def test_telemetry_filters_realtime_and_exports(case_api) -> None:
     stats = client.get("/events/stats", headers=operator).json()
     assert stats["total"] == 1
     assert stats["top_sources"][event["src"]] == 1
+    assert stats["by_geo"]["RU"] == 1
+    assert stats["by_asn"]["AS64500"] == 1
 
     csv_response = client.get("/events/export.csv", headers=operator)
     assert csv_response.status_code == 200
@@ -211,3 +213,130 @@ def test_threshold_alert_and_acknowledgement(case_api) -> None:
     response = client.post(f"/alerts/{alerts[0]['id']}/acknowledge", headers=operator)
     assert response.status_code == 200, response.text
     assert response.json()["acknowledged"] is True
+
+
+def test_sessions_artifacts_and_honeytoken_triggers(case_api) -> None:
+    client, agent_id = case_api
+    operator = {"Authorization": "Bearer operator"}
+    gateway = agent_headers(agent_id)
+    session_id = str(uuid4())
+    started_at = "2026-10-12T12:00:00Z"
+    ended_at = "2026-10-12T12:00:02Z"
+
+    report = {
+        "id": session_id,
+        "started_at": started_at,
+        "service": "ssh",
+        "level": "medium",
+        "src": "192.0.2.44:51515",
+        "protocol": "tcp",
+        "source_port": 51515,
+        "destination_port": 22,
+        "username": "root",
+        "credentials": {"username": "root", "password": "toor"},
+        "commands": ["id"],
+        "requests": [],
+        "transcript": "$ id\nuid=0(root)",
+        "data": {"geo": "RU", "asn": "AS64500"},
+    }
+    response = client.post(
+        "/agents/sessions", headers=gateway, json={"sessions": [report]}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"accepted": 1, "created": 1, "updated": 0}
+
+    report["ended_at"] = ended_at
+    report["commands"].append("uname -a")
+    response = client.post(
+        "/agents/sessions", headers=gateway, json={"sessions": [report]}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["updated"] == 1
+
+    sessions = client.get(
+        "/sessions", headers=operator, params={"agent_id": agent_id}
+    )
+    assert sessions.status_code == 200, sessions.text
+    assert sessions.json()[0]["duration_ms"] == 2000
+    assert sessions.json()[0]["credentials"]["password"] == "toor"
+
+    artifact_id = str(uuid4())
+    artifact_content = b"captured payload"
+    artifact = client.post(
+        "/agents/artifacts",
+        headers=gateway,
+        data={
+            "artifact_id": artifact_id,
+            "kind": "uploaded_file",
+            "session_id": session_id,
+            "metadata": '{"original_path":"/tmp/tool"}',
+        },
+        files={"file": ("tool.bin", artifact_content, "application/octet-stream")},
+    )
+    assert artifact.status_code == 201, artifact.text
+    assert artifact.json()["size_bytes"] == len(artifact_content)
+    duplicate_artifact = client.post(
+        "/agents/artifacts",
+        headers=gateway,
+        data={
+            "artifact_id": artifact_id,
+            "kind": "uploaded_file",
+            "session_id": session_id,
+        },
+        files={"file": ("tool.bin", artifact_content, "application/octet-stream")},
+    )
+    assert duplicate_artifact.status_code == 201, duplicate_artifact.text
+    assert duplicate_artifact.json()["id"] == artifact_id
+    download = client.get(f"/artifacts/{artifact_id}/content", headers=operator)
+    assert download.status_code == 200
+    assert download.content == artifact_content
+
+    token = client.post(
+        "/honeytokens",
+        headers=operator,
+        json={
+            "name": "demo-key",
+            "file_name": "id_ed25519",
+            "target_path": "/root/.ssh/id_ed25519",
+            "content": "FAKE-PRIVATE-KEY",
+        },
+    )
+    assert token.status_code == 201, token.text
+    token_data = token.json()
+    config = client.put(
+        f"/agents/{agent_id}/config",
+        headers=operator,
+        json={
+            "services": [{"type": "ssh", "level": "medium", "listen": ":2222"}],
+            "honeytokens": [
+                {
+                    "id": token_data["id"],
+                    "name": token_data["name"],
+                    "file_name": token_data["file_name"],
+                    "target_path": token_data["target_path"],
+                    "content_type": token_data["content_type"],
+                    "encoding": token_data["encoding"],
+                    "content": "FAKE-PRIVATE-KEY",
+                    "checksum_sha256": token_data["checksum_sha256"],
+                }
+            ],
+        },
+    )
+    assert config.status_code == 200, config.text
+
+    trigger_id = str(uuid4())
+    trigger = client.post(
+        "/agents/honeytoken-triggers",
+        headers=gateway,
+        json={
+            "id": trigger_id,
+            "honeytoken_id": token_data["id"],
+            "triggered_at": ended_at,
+            "src": "192.0.2.44",
+            "context": {"path": "/root/.ssh/id_ed25519"},
+        },
+    )
+    assert trigger.status_code == 201, trigger.text
+    triggers = client.get("/honeytoken-triggers", headers=operator)
+    assert triggers.status_code == 200, triggers.text
+    assert triggers.json()[0]["id"] == trigger_id

@@ -12,11 +12,13 @@ from modules.auth.access import user_from_access_token, user_permissions
 
 PUBLIC_PATHS = {
     "/auth/login",
-    "/auth/register",
     "/agents/enroll",
     "/agents/heartbeat",
     "/agents/config",
     "/agents/events",
+    "/agents/sessions",
+    "/agents/artifacts",
+    "/agents/honeytoken-triggers",
     "/docs",
     "/docs/oauth2-redirect",
     "/health",

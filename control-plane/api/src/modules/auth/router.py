@@ -18,6 +18,7 @@ from modules.auth.schemas import (
     UserCreate,
     UserRead,
     UserRolesUpdate,
+    UserStatusUpdate,
 )
 from modules.auth.security import create_access_token, hash_password, verify_password
 
@@ -51,7 +52,12 @@ async def load_user(session: AsyncSession, user_id: int) -> User | None:
     )
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=requires(PermissionName.USERS_MANAGE),
+)
 async def register(payload: UserCreate, session: Session) -> UserRead:
     viewer = await session.scalar(
         select(Role)
@@ -117,6 +123,46 @@ async def login(payload: LoginRequest, session: Session) -> TokenResponse:
 @router.get("/me", response_model=UserRead)
 async def me(user: CurrentUser) -> UserRead:
     return user_response(user)
+
+
+@router.get(
+    "/users",
+    response_model=list[UserRead],
+    dependencies=requires(PermissionName.USERS_READ),
+)
+async def list_users(session: Session) -> list[UserRead]:
+    users = (
+        await session.scalars(
+            select(User)
+            .options(selectinload(User.roles).selectinload(Role.permissions))
+            .order_by(User.created_at, User.id)
+        )
+    ).all()
+    return [user_response(user) for user in users]
+
+
+@router.put(
+    "/users/{user_id}/status",
+    response_model=UserRead,
+    dependencies=requires(PermissionName.USERS_MANAGE),
+)
+async def update_user_status(
+    user_id: int,
+    payload: UserStatusUpdate,
+    current_user: CurrentUser,
+    session: Session,
+) -> UserRead:
+    if user_id == current_user.id and not payload.is_active:
+        raise HTTPException(409, "Users cannot deactivate themselves")
+    user = await load_user(session, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    user.is_active = payload.is_active
+    await session.commit()
+    updated = await load_user(session, user.id)
+    if updated is None:
+        raise RuntimeError("Updated user could not be loaded")
+    return user_response(updated)
 
 
 @router.get(

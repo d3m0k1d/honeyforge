@@ -20,6 +20,8 @@ class PermissionName(StrEnum):
     PROFILES_READ = "profiles:read"
     PROFILES_MANAGE = "profiles:manage"
     EVENTS_READ = "events:read"
+    SESSIONS_READ = "sessions:read"
+    ARTIFACTS_READ = "artifacts:read"
     AUDIT_READ = "audit:read"
     ALERTS_READ = "alerts:read"
     ALERTS_MANAGE = "alerts:manage"
@@ -68,3 +70,7 @@ class TokenResponse(BaseModel):
 
 class UserRolesUpdate(BaseModel):
     roles: set[RoleName] = Field(min_length=1)
+
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool

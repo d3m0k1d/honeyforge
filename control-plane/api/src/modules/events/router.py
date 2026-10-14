@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import ipaddress
+import json
 from datetime import UTC, datetime
 from io import StringIO
 from typing import Annotated, Any, TypeAlias
@@ -38,6 +39,14 @@ def event_dict(event: AgentEvent, agent_id: str) -> dict[str, Any]:
         "data": event.data,
         "geo": data.get("geo") or data.get("country"),
         "asn": data.get("asn"),
+        "protocol": data.get("protocol"),
+        "source_port": data.get("source_port") or data.get("src_port"),
+        "destination_port": data.get("destination_port") or data.get("dst_port"),
+        "username": data.get("username"),
+        "command": data.get("command"),
+        "request": data.get("request"),
+        "payload": data.get("payload"),
+        "session_id": data.get("session_id"),
     }
 
 
@@ -128,11 +137,31 @@ async def event_stats(session: Session) -> EventStats:
         .order_by(desc(func.count()))
         .limit(20)
     )
+    geo = func.coalesce(
+        AgentEvent.data["geo"].as_string(), AgentEvent.data["country"].as_string()
+    )
+    geo_rows = await session.execute(
+        select(geo, func.count())
+        .where(AgentEvent.data.is_not(None), geo.is_not(None))
+        .group_by(geo)
+        .order_by(desc(func.count()))
+        .limit(50)
+    )
+    asn = AgentEvent.data["asn"].as_string()
+    asn_rows = await session.execute(
+        select(asn, func.count())
+        .where(AgentEvent.data.is_not(None), asn.is_not(None))
+        .group_by(asn)
+        .order_by(desc(func.count()))
+        .limit(50)
+    )
     return EventStats(
         total=total,
         by_event={key: count for key, count in by_event_rows},
         by_service={key: count for key, count in by_service_rows},
         top_sources={key: count for key, count in source_rows},
+        by_geo={key: count for key, count in geo_rows},
+        by_asn={key: count for key, count in asn_rows},
         generated_at=datetime.now(UTC),
     )
 
@@ -157,9 +186,27 @@ async def export_events_csv(session: Session) -> Response:
     output = StringIO(newline="")
     writer = csv.writer(output)
     writer.writerow(
-        ["event_id", "agent_id", "timestamp", "service", "level", "source", "event"]
+        [
+            "event_id",
+            "agent_id",
+            "timestamp",
+            "service",
+            "level",
+            "source",
+            "event",
+            "rule",
+            "geo",
+            "asn",
+            "protocol",
+            "source_port",
+            "destination_port",
+            "username",
+            "session_id",
+            "data",
+        ]
     )
     for item, agent_id in rows:
+        data = item.data or {}
         writer.writerow(
             [
                 item.event_id,
@@ -169,6 +216,17 @@ async def export_events_csv(session: Session) -> Response:
                 csv_cell(item.level),
                 csv_cell(item.src),
                 csv_cell(item.event),
+                csv_cell(item.rule),
+                csv_cell(data.get("geo") or data.get("country")),
+                csv_cell(data.get("asn")),
+                csv_cell(data.get("protocol")),
+                csv_cell(data.get("source_port") or data.get("src_port")),
+                csv_cell(
+                    data.get("destination_port") or data.get("dst_port")
+                ),
+                csv_cell(data.get("username")),
+                csv_cell(data.get("session_id")),
+                csv_cell(json.dumps(data, ensure_ascii=False, sort_keys=True)),
             ]
         )
     return Response(

@@ -18,6 +18,14 @@ class EventRead(BaseModel):
     data: dict[str, Any] | None
     geo: str | None = None
     asn: str | None = None
+    protocol: str | None = None
+    source_port: int | None = None
+    destination_port: int | None = None
+    username: str | None = None
+    command: str | None = None
+    request: str | None = None
+    payload: str | None = None
+    session_id: UUID | None = None
 
 
 class EventStats(BaseModel):
@@ -25,4 +33,6 @@ class EventStats(BaseModel):
     by_event: dict[str, int]
     by_service: dict[str, int]
     top_sources: dict[str, int]
+    by_geo: dict[str, int]
+    by_asn: dict[str, int]
     generated_at: datetime

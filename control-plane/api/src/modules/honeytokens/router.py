@@ -122,5 +122,12 @@ async def update_honeytoken(
 async def delete_honeytoken(honeytoken_id: int, session: Session) -> Response:
     honeytoken = await get_honeytoken_or_404(session, honeytoken_id)
     await session.delete(honeytoken)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Honeytoken with trigger history must be deactivated, not deleted",
+        ) from None
     return Response(status_code=status.HTTP_204_NO_CONTENT)

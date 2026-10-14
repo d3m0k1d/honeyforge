@@ -52,10 +52,13 @@ class DeploymentAction(StrEnum):
     STOP = "stop"
     DESTROY = "destroy"
     RECONCILE = "reconcile"
+    UPDATE = "update"
+    ROTATE_CREDENTIALS = "rotate_credentials"
 
 
 class DeploymentActionRequest(BaseModel):
     action: DeploymentAction
+    parameters: dict[str, Any] = Field(default_factory=dict, max_length=64)
 
 
 class SnapshotCreate(BaseModel):

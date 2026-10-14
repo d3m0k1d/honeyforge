@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import (
@@ -78,6 +78,13 @@ class ConfigObject(BaseModel):
 
 class AgentLog(ConfigObject):
     output: str = ""
+    capture_connections: StrictBool = True
+    capture_credentials: StrictBool = True
+    capture_commands: StrictBool = True
+    capture_requests: StrictBool = True
+    capture_payloads: StrictBool = True
+    capture_session_content: StrictBool = True
+    max_payload_bytes: StrictInt = Field(default=65_536, ge=0, le=10_485_760)
 
 
 class AgentMasking(ConfigObject):
@@ -182,7 +189,6 @@ class AgentConfigRead(ConfigObject):
 
 EventString = Annotated[str, Field(min_length=1, max_length=256)]
 DataKey = Annotated[str, Field(max_length=128)]
-DataValue = Annotated[str, Field(max_length=4096)]
 
 
 class AgentEventRead(ConfigObject):
@@ -193,7 +199,7 @@ class AgentEventRead(ConfigObject):
     src: str | None = Field(default=None, max_length=512)
     event: EventString
     rule: str | None = Field(default=None, max_length=256)
-    data: dict[DataKey, DataValue] | None = Field(default=None, max_length=64)
+    data: dict[DataKey, Any] | None = Field(default=None, max_length=64)
 
 
 class AgentEventBatch(ConfigObject):

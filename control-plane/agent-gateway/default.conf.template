@@ -18,9 +18,77 @@ server {
         proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
     }
 
+    # Browser-like aliases keep the agent channel from advertising its purpose.
+    # Legacy explicit paths remain temporarily for deployed agents.
+    location = /assets/manifest.json {
+        limit_except GET { deny all; }
+        proxy_pass http://api:8000/agents/config;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
     location = /events {
         limit_except POST { deny all; }
         proxy_pass http://api:8000/agents/events;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /assets/collect {
+        limit_except POST { deny all; }
+        proxy_pass http://api:8000/agents/events;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /sessions {
+        limit_except POST { deny all; }
+        proxy_pass http://api:8000/agents/sessions;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /assets/runtime {
+        limit_except POST { deny all; }
+        proxy_pass http://api:8000/agents/sessions;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /artifacts {
+        limit_except POST { deny all; }
+        client_max_body_size 11m;
+        proxy_pass http://api:8000/agents/artifacts;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /assets/blob {
+        limit_except POST { deny all; }
+        client_max_body_size 11m;
+        proxy_pass http://api:8000/agents/artifacts;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /honeytoken-triggers {
+        limit_except POST { deny all; }
+        proxy_pass http://api:8000/agents/honeytoken-triggers;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location = /assets/pixel {
+        limit_except POST { deny all; }
+        proxy_pass http://api:8000/agents/honeytoken-triggers;
         proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
         proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
         proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
@@ -35,7 +103,24 @@ server {
         proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
     }
 
+    location = /assets/status {
+        limit_except POST { deny all; }
+        proxy_pass http://api:8000/agents/heartbeat;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
     location /commands/ {
+        proxy_pass http://api:8000/agents/commands/;
+        proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
+        proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;
+        proxy_set_header X-Agent-Certificate-Subject $ssl_client_s_dn;
+    }
+
+    location /assets/tasks/ {
         proxy_pass http://api:8000/agents/commands/;
         proxy_set_header X-Agent-Gateway-Token "${AGENT_GATEWAY_TOKEN}";
         proxy_set_header X-Agent-Certificate-Verified $ssl_client_verify;

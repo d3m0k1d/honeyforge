@@ -91,7 +91,7 @@ def test_permission_dependency_rejects_missing_permission() -> None:
 
 def test_authentication_middleware_public_paths_are_explicit() -> None:
     assert "/auth/login" in PUBLIC_PATHS
-    assert "/auth/register" in PUBLIC_PATHS
+    assert "/auth/register" not in PUBLIC_PATHS
     assert "/agents/enroll" in PUBLIC_PATHS
     assert "/agents/heartbeat" in PUBLIC_PATHS
     assert "/auth/me" not in PUBLIC_PATHS

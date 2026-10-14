@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import PurePosixPath
 from typing import Annotated, TypeAlias
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import (
@@ -167,8 +168,14 @@ async def upload_deployment_artifact(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail="Artifact must be between 1 byte and 10 MiB",
         )
+    file_name = file.filename or entrypoint_path.name
+    if len(file_name) > 255:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Artifact file name is too long",
+        )
     artifact = DeploymentArtifact(
-        name=file.filename or entrypoint_path.name,
+        name=file_name,
         kind=kind,
         entrypoint=entrypoint,
         content=content,
@@ -195,7 +202,9 @@ async def download_deployment_artifact(artifact_id: UUID, session: Session) -> R
         content=artifact.content,
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f'attachment; filename="{artifact.name}"',
+            "Content-Disposition": (
+                "attachment; filename*=UTF-8''" + quote(artifact.name, safe="")
+            ),
             "X-Checksum-SHA256": artifact.checksum_sha256,
         },
     )
@@ -338,7 +347,12 @@ async def deployment_action(
     }
     if payload.action in desired_states:
         deployment.desired_state = desired_states[payload.action]
-    enqueue_command(session, deployment, payload.action)
+    enqueue_command(
+        session,
+        deployment,
+        payload.action,
+        {"parameters": payload.parameters} if payload.parameters else None,
+    )
     await session.commit()
     await session.refresh(deployment)
     return deployment_response(deployment)

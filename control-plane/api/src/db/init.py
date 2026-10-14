@@ -21,6 +21,8 @@ ROLE_PERMISSIONS = {
         PermissionName.PROFILES_READ,
         PermissionName.PROFILES_MANAGE,
         PermissionName.EVENTS_READ,
+        PermissionName.SESSIONS_READ,
+        PermissionName.ARTIFACTS_READ,
         PermissionName.ALERTS_READ,
         PermissionName.ALERTS_MANAGE,
     },
@@ -31,6 +33,8 @@ ROLE_PERMISSIONS = {
         PermissionName.DEPLOYMENTS_READ,
         PermissionName.PROFILES_READ,
         PermissionName.EVENTS_READ,
+        PermissionName.SESSIONS_READ,
+        PermissionName.ARTIFACTS_READ,
         PermissionName.ALERTS_READ,
     },
 }

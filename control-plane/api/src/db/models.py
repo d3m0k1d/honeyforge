@@ -152,6 +152,15 @@ class Agent(Base):
     events: Mapped[list["AgentEvent"]] = relationship(
         back_populates="agent", cascade="all, delete-orphan"
     )
+    attack_sessions: Mapped[list["AttackSession"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    captured_artifacts: Mapped[list["CapturedArtifact"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
+    honeytoken_triggers: Mapped[list["HoneytokenTrigger"]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan"
+    )
 
 
 class AgentConfiguration(Base):
@@ -190,8 +199,86 @@ class AgentEvent(Base):
     src: Mapped[str | None] = mapped_column(String(512))
     event: Mapped[str] = mapped_column(String(256))
     rule: Mapped[str | None] = mapped_column(String(256))
-    data: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     agent: Mapped[Agent] = relationship(back_populates="events")
+
+
+class AttackSession(Base):
+    __tablename__ = "attack_sessions"
+    __table_args__ = (
+        UniqueConstraint("session_id", name="uq_attack_sessions_session_id"),
+        Index("ix_attack_sessions_agent_started", "agent_id", "started_at"),
+        Index("ix_attack_sessions_src_service", "src", "service"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[UUID] = mapped_column(Uuid)
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    service: Mapped[str] = mapped_column(String(256))
+    level: Mapped[str | None] = mapped_column(String(64))
+    src: Mapped[str | None] = mapped_column(String(512))
+    protocol: Mapped[str | None] = mapped_column(String(32))
+    source_port: Mapped[int | None] = mapped_column(Integer)
+    destination_port: Mapped[int | None] = mapped_column(Integer)
+    username: Mapped[str | None] = mapped_column(String(512))
+    credentials: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    commands: Mapped[list[str]] = mapped_column(JSON, default=list)
+    requests: Mapped[list[str]] = mapped_column(JSON, default=list)
+    transcript: Mapped[str | None] = mapped_column(Text)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    agent: Mapped[Agent] = relationship(back_populates="attack_sessions")
+
+
+class CapturedArtifact(Base):
+    __tablename__ = "captured_artifacts"
+    __table_args__ = (
+        UniqueConstraint("artifact_id", name="uq_captured_artifacts_artifact_id"),
+        Index("ix_captured_artifacts_agent_uploaded", "agent_id", "uploaded_at"),
+        Index("ix_captured_artifacts_checksum", "checksum_sha256"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artifact_id: Mapped[UUID] = mapped_column(Uuid)
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    session_id: Mapped[UUID | None] = mapped_column(Uuid, index=True)
+    event_id: Mapped[UUID | None] = mapped_column(Uuid, index=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    file_name: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    checksum_sha256: Mapped[str] = mapped_column(String(64))
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    agent: Mapped[Agent] = relationship(back_populates="captured_artifacts")
+
+
+class HoneytokenTrigger(Base):
+    __tablename__ = "honeytoken_triggers"
+    __table_args__ = (
+        UniqueConstraint("trigger_id", name="uq_honeytoken_triggers_trigger_id"),
+        Index("ix_honeytoken_triggers_token_ts", "honeytoken_id", "triggered_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    trigger_id: Mapped[UUID] = mapped_column(Uuid)
+    honeytoken_id: Mapped[int] = mapped_column(
+        ForeignKey("honeytokens.id", ondelete="RESTRICT"), index=True
+    )
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), index=True
+    )
+    triggered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    src: Mapped[str | None] = mapped_column(String(512))
+    context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    agent: Mapped[Agent] = relationship(back_populates="honeytoken_triggers")
+    honeytoken: Mapped["Honeytoken"] = relationship(back_populates="triggers")
 
 
 class HoneypotProfile(Base):
@@ -407,6 +494,9 @@ class Honeytoken(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     user: Mapped[User] = relationship(back_populates="honeytokens")
+    triggers: Mapped[list[HoneytokenTrigger]] = relationship(
+        back_populates="honeytoken", passive_deletes=True
+    )
 
     @validates("content")
     def update_checksum(self, _: str, content: str) -> str:

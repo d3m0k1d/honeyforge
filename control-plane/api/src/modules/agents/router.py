@@ -387,3 +387,24 @@ async def list_agents(session: Session) -> list[AgentRead]:
             )
         )
     return result
+
+
+@router.post(
+    "/{agent_id}/revoke",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=requires(PermissionName.AGENTS_MANAGE),
+)
+async def revoke_agent(
+    session: Session,
+    agent_id: str = Path(pattern=AGENT_ID_PATTERN),
+) -> Response:
+    agent = await session.scalar(
+        select(Agent).where(Agent.external_id == agent_id).with_for_update()
+    )
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+    agent.enrolled_at = None
+    agent.enrollment_token_hash = None
+    agent.enrollment_expires_at = None
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
