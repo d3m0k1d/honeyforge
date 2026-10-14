@@ -48,6 +48,7 @@ services:
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
       INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
       MTLS_DIR: /var/lib/honeypotforge/mtls
       SERVER_COMMON_NAME: ${SERVER_COMMON_NAME:-agent-gateway}
       SERVER_SAN: ${SERVER_SAN:-DNS:agent-gateway,DNS:api,DNS:localhost,IP:127.0.0.1}

@@ -15,6 +15,7 @@
     "@iconify-json/lucide": "^1.2.142",
     "@nuxt/ui": "^4.11.3",
     "@pinia/nuxt": "^1.0.2",
+    "axios": "^1.20.0",
     "chart.js": "^4.5.1",
     "nuxt": "^4.6.0",
     "pinia": "^4.0.3",

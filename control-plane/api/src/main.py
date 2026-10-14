@@ -32,6 +32,7 @@ app.add_middleware(AuthenticationMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=Settings.CORS_ORIGINS,
+    allow_origin_regex=Settings.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

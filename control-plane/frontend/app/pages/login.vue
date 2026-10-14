@@ -12,9 +12,14 @@ const mode = ref<AuthMode>(
 const state = reactive({
   login: "",
   password: "",
+  firstName: "",
+  lastName: "",
 });
 
 const passwordVisible = ref(false);
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MIN_PASSWORD_LENGTH = 12;
 
 const tabs = [
   { label: "Вход", value: "login", icon: "i-lucide-log-in" },
@@ -46,14 +51,49 @@ const passwordHint = computed(() =>
   passwordVisible.value ? "Скрыть пароль" : "Показать пароль",
 );
 
+const passwordLengthHint = computed(() =>
+  mode.value === "register"
+    ? `Минимум ${MIN_PASSWORD_LENGTH} символов`
+    : null,
+);
+
+function validate(): string | null {
+  const login = state.login.trim();
+
+  if (!login) return "Укажите e-mail";
+  if (!state.password) return "Укажите пароль";
+
+  if (mode.value === "register") {
+    if (!EMAIL_RE.test(login)) return "Введите корректный e-mail";
+    if (state.password.length < MIN_PASSWORD_LENGTH)
+      return `Пароль должен содержать минимум ${MIN_PASSWORD_LENGTH} символов`;
+    if (state.password.length > 128) return "Пароль слишком длинный";
+    if (!state.firstName.trim() || !state.lastName.trim())
+      return "Укажите имя и фамилию";
+  }
+
+  return null;
+}
+
 watch(mode, () => auth.clearError());
 
 async function onSubmit() {
-  const credentials = { login: state.login, password: state.password };
+  const validationError = validate();
+
+  if (validationError) {
+    auth.error = validationError;
+    return;
+  }
+
   const success =
     mode.value === "login"
-      ? await auth.login(credentials)
-      : await auth.register(credentials);
+      ? await auth.login({ login: state.login, password: state.password })
+      : await auth.register({
+          login: state.login,
+          password: state.password,
+          firstName: state.firstName,
+          lastName: state.lastName,
+        });
 
   if (!success) return;
 
@@ -90,25 +130,58 @@ async function onSubmit() {
         />
 
         <UForm :state="state" class="space-y-4" @submit="onSubmit">
-          <UFormField label="Логин" required>
+          <UFormField label="E-mail" required>
             <UInput
               v-model="state.login"
               name="login"
-              placeholder="analyst"
+              type="email"
+              placeholder="analyst@example.com"
               autocomplete="username"
               :disabled="auth.pending"
               :ui="fieldUi"
               class="w-full"
-              icon="i-lucide-user-round"
+              icon="i-lucide-mail"
             />
           </UFormField>
 
-          <UFormField label="Пароль" required>
+          <template v-if="mode === 'register'">
+            <UFormField label="Имя" required>
+              <UInput
+                v-model="state.firstName"
+                name="firstName"
+                placeholder="Аналитик"
+                autocomplete="given-name"
+                :disabled="auth.pending"
+                :ui="fieldUi"
+                class="w-full"
+                icon="i-lucide-user-round"
+              />
+            </UFormField>
+
+            <UFormField label="Фамилия" required>
+              <UInput
+                v-model="state.lastName"
+                name="lastName"
+                placeholder="Иванов"
+                autocomplete="family-name"
+                :disabled="auth.pending"
+                :ui="fieldUi"
+                class="w-full"
+                icon="i-lucide-user-round"
+              />
+            </UFormField>
+          </template>
+
+          <UFormField
+            label="Пароль"
+            :hint="passwordLengthHint ?? undefined"
+            required
+          >
             <UInput
               v-model="state.password"
               name="password"
               :type="passwordType"
-              placeholder="••••••••"
+              placeholder="••••••••••••"
               :autocomplete="passwordAutocomplete"
               :disabled="auth.pending"
               :ui="fieldUi"
@@ -139,7 +212,7 @@ async function onSubmit() {
         </UForm>
 
         <p class="text-center text-[11px] text-dimmed">
-          Демо-режим: аккаунты хранятся локально в браузере
+          Вход через API HoneypotForge · локальные демо-аккаунты — как fallback
         </p>
       </UCard>
     </div>

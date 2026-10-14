@@ -1,18 +1,24 @@
 import { defineStore } from "pinia";
-import type { AuthUser, Credentials, NewUser, StoredUser } from "~/types/auth";
+import type {
+  AuthUser,
+  Credentials,
+  NewUser,
+  RegisterPayload,
+  StoredUser,
+} from "~/types/auth";
+import type { UserRead } from "~/types/api";
+import { authApi } from "~/api/auth";
+import { clearCache } from "~/api/cache";
+import { toApiError, type ApiError } from "~/api/errors";
+import { clearToken, getToken, setToken } from "~/api/token";
 import mockUsers from "~/data/users.json";
 
 const USERS_KEY = "honeypotforge:custom-users";
 const SESSION_COOKIE = "honeypotforge:session";
 const PASSWORD_OVERRIDES_KEY = "honeypotforge:password-overrides";
-const REQUEST_DELAY = 500;
 
 const MOCK_USERS = mockUsers as unknown as StoredUser[];
 const MOCK_IDS = new Set(MOCK_USERS.map((user) => user.id));
-
-function isClient() {
-  return import.meta.client;
-}
 
 function createId(prefix: string) {
   const random =
@@ -23,10 +29,6 @@ function createId(prefix: string) {
   return `${prefix}_${random}`;
 }
 
-function request() {
-  return new Promise((resolve) => setTimeout(resolve, REQUEST_DELAY));
-}
-
 function findUser(login: string) {
   const query = login.trim().toLowerCase();
 
@@ -34,7 +36,7 @@ function findUser(login: string) {
 }
 
 function readPasswordOverrides(): Record<string, string> {
-  if (!isClient()) return {};
+  if (!import.meta.client) return {};
 
   try {
     const raw = localStorage.getItem(PASSWORD_OVERRIDES_KEY);
@@ -47,13 +49,50 @@ function readPasswordOverrides(): Record<string, string> {
 }
 
 function writePasswordOverrides(map: Record<string, string>) {
-  if (!isClient()) return;
+  if (!import.meta.client) return;
 
   localStorage.setItem(PASSWORD_OVERRIDES_KEY, JSON.stringify(map));
 }
 
 function effectivePassword(stored: StoredUser) {
   return readPasswordOverrides()[stored.id] ?? stored.password;
+}
+
+/** Перевод типичных ошибок HoneypotForge API на человекочитаемый русский. */
+function humanizeError(error: ApiError): string {
+  if (error.status === 401) return "Неверный e-mail или пароль";
+  if (error.status === 403)
+    return "Доступ запрещён: аккаунт неактивен или не хватает прав";
+  if (error.status === 409) return "Пользователь с таким e-mail уже существует";
+
+  if (error.status === 422) {
+    if (/at least 12/i.test(error.message))
+      return "Пароль должен содержать минимум 12 символов";
+    if (/not a valid email/i.test(error.message)) return "Некорректный e-mail";
+
+    return "Проверьте корректность заполненных полей";
+  }
+
+  return error.message;
+}
+
+function toAuthUser(apiUser: UserRead): AuthUser {
+  const roles = apiUser.roles.map((role) => role.name);
+  const permissions = [
+    ...new Set(apiUser.roles.flatMap((role) => role.permissions ?? [])),
+  ];
+
+  return {
+    id: String(apiUser.id),
+    login: apiUser.email,
+    roles,
+    isAdmin: roles.includes("admin"),
+    createdAt: apiUser.created_at,
+    source: "api",
+    firstName: apiUser.first_name,
+    lastName: apiUser.last_name,
+    permissions,
+  };
 }
 
 export const useAuthStore = defineStore("auth", () => {
@@ -73,8 +112,10 @@ export const useAuthStore = defineStore("auth", () => {
   const users = computed(() => [...customUsers.value, ...MOCK_USERS]);
   const isAuthenticated = computed(() => Boolean(user.value));
 
+  let restored = false;
+
   function readCustomUsers(): StoredUser[] {
-    if (!isClient()) return [];
+    if (!import.meta.client) return [];
 
     try {
       const raw = localStorage.getItem(USERS_KEY);
@@ -87,7 +128,7 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   function writeCustomUsers(list: StoredUser[]) {
-    if (!isClient()) return;
+    if (!import.meta.client) return;
 
     localStorage.setItem(USERS_KEY, JSON.stringify(list));
   }
@@ -96,17 +137,9 @@ export const useAuthStore = defineStore("auth", () => {
     customUsers.value = readCustomUsers();
   }
 
-  function startSession(stored: StoredUser) {
-    const authUser: AuthUser = {
-      id: stored.id,
-      login: stored.login,
-      roles: stored.roles,
-      isAdmin: stored.isAdmin,
-      createdAt: stored.createdAt,
-    };
-
-    user.value = authUser;
-    session.value = authUser;
+  function startSession(stored: AuthUser) {
+    user.value = stored;
+    session.value = stored;
   }
 
   function endSession() {
@@ -115,60 +148,135 @@ export const useAuthStore = defineStore("auth", () => {
     session.value = null;
   }
 
-  async function login(credentials: Credentials) {
+  /**
+   * Восстановление сессии при загрузке приложения:
+   * токен из localStorage + сверка с GET /auth/me.
+   */
+  async function init(): Promise<void> {
+    if (!import.meta.client || restored) return;
+    restored = true;
+
+    if (!user.value && session.value) user.value = session.value;
+    if (!user.value || user.value.source !== "api") return;
+
+    if (!getToken()) {
+      endSession();
+      return;
+    }
+
+    try {
+      const me = await authApi.me({ force: true });
+      startSession(toAuthUser(me));
+    } catch (err) {
+      const apiError = toApiError(err);
+
+      // 401 — токен истёк/отозван; сетевые сбои не должны разлогинивать
+      if (apiError.status === 401) endSession();
+    }
+  }
+
+  function localLogin(login: string, password: string): boolean {
+    const stored =
+      findUser(login) ??
+      readCustomUsers().find(
+        (item) => item.login.toLowerCase() === login.toLowerCase(),
+      );
+
+    if (!stored || effectivePassword(stored) !== password) {
+      error.value = "Неверный e-mail или пароль";
+      return false;
+    }
+
+    startSession({
+      id: stored.id,
+      login: stored.login,
+      roles: stored.roles,
+      isAdmin: stored.isAdmin,
+      createdAt: stored.createdAt,
+      source: "local",
+    });
+
+    return true;
+  }
+
+  async function login(credentials: Credentials): Promise<boolean> {
     pending.value = true;
     error.value = null;
 
     try {
-      const login = credentials.login.trim();
+      const email = credentials.login.trim();
       const password = credentials.password;
 
-      if (!login || !password) {
-        error.value = "Укажите логин и пароль";
+      if (!email || !password) {
+        error.value = "Укажите e-mail и пароль";
         return false;
       }
 
-      await request();
+      try {
+        const tokenResponse = await authApi.login({ email, password });
+        setToken(tokenResponse.access_token, tokenResponse.expires_in);
 
-      const stored =
-        findUser(login) ??
-        readCustomUsers().find(
-          (item) => item.login.toLowerCase() === login.toLowerCase(),
-        );
+        const me = await authApi.me({ force: true });
+        startSession(toAuthUser(me));
 
-      if (!stored || effectivePassword(stored) !== password) {
-        error.value = "Неверный логин или пароль";
+        return true;
+      } catch (err) {
+        const apiError = toApiError(err);
+
+        // 401 — неверные учётные данные; 422 — не e-mail (локальные демо-аккаунты)
+        if (apiError.status === 401 || apiError.status === 422) {
+          return localLogin(email, password);
+        }
+
+        error.value = humanizeError(apiError);
         return false;
       }
-
-      startSession(stored);
-
-      return true;
     } finally {
       pending.value = false;
     }
   }
 
-  async function register(credentials: Credentials) {
+  async function register(payload: RegisterPayload): Promise<boolean> {
     pending.value = true;
     error.value = null;
 
     try {
-      const login = credentials.login.trim();
-      const password = credentials.password;
+      const email = payload.login.trim();
+      const password = payload.password;
+      const firstName = payload.firstName.trim();
+      const lastName = payload.lastName.trim();
 
-      if (!login || !password) {
-        error.value = "Укажите логин и пароль";
+      if (!email || !password || !firstName || !lastName) {
+        error.value = "Заполните все поля";
         return false;
       }
 
-      const created = await createUser({ login, password, roles: [] });
+      try {
+        await authApi.register({
+          email,
+          password,
+          first_name: firstName,
+          last_name: lastName,
+        });
+      } catch (err) {
+        error.value = humanizeError(toApiError(err));
+        return false;
+      }
 
-      if (!created) return false;
+      // API не выдаёт токен при регистрации — логинимся сразу
+      try {
+        const tokenResponse = await authApi.login({ email, password });
+        setToken(tokenResponse.access_token, tokenResponse.expires_in);
 
-      startSession(created);
+        const me = await authApi.me({ force: true });
+        startSession(toAuthUser(me));
 
-      return true;
+        return true;
+      } catch {
+        error.value =
+          "Аккаунт создан, но автоматический вход не удался. Войдите вручную.";
+        return false;
+      }
     } finally {
       pending.value = false;
     }
@@ -186,8 +294,6 @@ export const useAuthStore = defineStore("auth", () => {
         error.value = "Укажите логин и пароль";
         return null;
       }
-
-      await request();
 
       if (findUser(login)) {
         error.value = "Пользователь с таким логином уже существует";
@@ -208,6 +314,7 @@ export const useAuthStore = defineStore("auth", () => {
         roles: [...input.roles],
         isAdmin: input.roles.includes("admin"),
         createdAt: new Date().toISOString(),
+        source: "local",
       };
 
       writeCustomUsers([...list, stored]);
@@ -227,10 +334,15 @@ export const useAuthStore = defineStore("auth", () => {
     writeCustomUsers(list);
     customUsers.value = list;
 
-    if (user.value?.id === id) endSession();
+    if (user.value?.id === id) {
+      clearToken();
+      endSession();
+    }
   }
 
   function logout() {
+    clearToken();
+    clearCache();
     endSession();
   }
 
@@ -251,7 +363,12 @@ export const useAuthStore = defineStore("auth", () => {
       return { ok: false as const, error: "Новый пароль — минимум 6 символов" };
     }
 
-    await request();
+    if (user.value.source === "api") {
+      return {
+        ok: false as const,
+        error: "Смена пароля недоступна: в API нет такого endpoint",
+      };
+    }
 
     const stored =
       readCustomUsers().find((item) => item.id === user.value!.id) ??
@@ -280,6 +397,8 @@ export const useAuthStore = defineStore("auth", () => {
     customUsers,
     users,
     isAuthenticated,
+    init,
+    endSession,
     loadUsers,
     login,
     register,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useAuthStore } from "~/stores/auth";
 const auth = useAuthStore();
-// auth.initFromStorage(); // delayed to client
+// сессия восстанавливается в auth-плагине (app/plugins/auth.client.ts)
 
 const booting = ref(true);
 

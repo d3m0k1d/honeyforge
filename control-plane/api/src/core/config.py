@@ -29,5 +29,18 @@ class Settings:
         if origin.strip()
     ]
 
+    # Дополнительный regex для CORS (Starlette сравнивает его через fullmatch
+    # с полным origin вида http://host:port). Нужен, чтобы панель открывалась
+    # не только с localhost, но и по 127.0.0.1 / LAN-IP в приватной сети.
+    # Пустое значение = дефолт; чтобы отключить — задайте несопоставимый паттерн.
+    CORS_ORIGIN_REGEX = getenv("CORS_ORIGIN_REGEX") or (
+        r"^https?://("
+        r"localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+        r")(:\d+)?$"
+    )
+
     MTLS_DIR = Path(getenv("MTLS_DIR", "/var/lib/honeypotforge/mtls"))
     AGENT_GATEWAY_TOKEN = getenv("AGENT_GATEWAY_TOKEN")
