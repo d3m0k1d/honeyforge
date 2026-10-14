@@ -1,4 +1,19 @@
 services:
+  frontend:
+    build:
+      context: ./control-plane/frontend
+      dockerfile: Dockerfile
+      args:
+        NUXT_APP_BASE_URL: ${FRONTEND_BASE_URL:-/}
+    environment:
+      NUXT_APP_BASE_URL: ${FRONTEND_BASE_URL:-/}
+    ports:
+      - "${FRONTEND_BIND:-0.0.0.0}:${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -38,7 +53,7 @@ services:
       SERVER_SAN: ${SERVER_SAN:-DNS:agent-gateway,DNS:api,DNS:localhost,IP:127.0.0.1}
       AGENT_GATEWAY_TOKEN: ${AGENT_GATEWAY_TOKEN:?AGENT_GATEWAY_TOKEN must contain at least 32 characters}
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
     volumes:
       - mtls_data:/var/lib/honeypotforge/mtls
     depends_on:
@@ -52,8 +67,8 @@ services:
       AGENT_GATEWAY_TOKEN: ${AGENT_GATEWAY_TOKEN:?AGENT_GATEWAY_TOKEN must contain at least 32 characters}
       NGINX_ENVSUBST_FILTER: AGENT_GATEWAY_TOKEN
     ports:
-      - "${AGENT_MTLS_PORT:-8443}:8443"
-      - "${CONTROL_HTTPS_PORT:-8444}:8444"
+      - "${AGENT_GATEWAY_BIND:-0.0.0.0}:${AGENT_MTLS_PORT:-8443}:8443"
+      - "${AGENT_GATEWAY_BIND:-0.0.0.0}:${CONTROL_HTTPS_PORT:-8444}:8444"
     volumes:
       - ./control-plane/agent-gateway/default.conf.template:/etc/nginx/templates/default.conf.template:ro
       - mtls_data:/etc/honeypotforge/mtls:ro

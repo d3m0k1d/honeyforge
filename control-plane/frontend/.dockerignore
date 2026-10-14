@@ -1,0 +1,28 @@
+# зависимости и артефакты сборки
+node_modules
+.nuxt
+.output
+.nitro
+.data
+.cache
+dist
+
+# git / IDE / логи
+.git
+.gitignore
+.idea
+.vscode
+.DS_Store
+*.log
+logs
+
+# секреты
+.env
+.env.*
+!.env.example
+
+# docker
+Dockerfile
+.dockerignore
+compose.yaml
+docker-compose*.yml
