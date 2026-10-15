@@ -1,11 +1,4 @@
-export type ServiceKey =
-  | "ssh"
-  | "http"
-  | "smtp"
-  | "redis"
-  | "tcp"
-  | "postgresql"
-  | "mysql";
+export type ServiceKey = string;
 
 export type TrapLevel = "low" | "medium" | "high";
 
@@ -18,7 +11,7 @@ export interface TrapService {
 
 export type TrapEventSeverity = "info" | "warning" | "critical";
 
-export type TrapEventAction = "auth_fail" | "auth_success" | "scan" | "exploit" | "command" | "connect" | "transfer";
+export type TrapEventAction = string;
 
 export interface TrapEvent {
   id: string;
@@ -32,6 +25,7 @@ export interface TrapEvent {
   message: string;
 }
 
+/** Ловушка = DeploymentRead (+ агент, события, профиль агента). */
 export interface Trap {
   id: string;
   name: string;
@@ -41,19 +35,17 @@ export interface Trap {
   level: TrapLevel;
   agentId: string;
   agentStatus: AgentStatusKey;
+  honeypotType: string;
+  driver: string;
+  desiredState: string;
+  observedState: string;
+  lastError: string | null;
   eventsCount: number;
   events: TrapEvent[];
   createdAt: string;
 }
 
-export interface TrapAgent {
-  id: string;
-  name: string;
-  host: string;
-  version: string;
-  uptime: string;
-}
-
+/** Отображаемый шаблон профиля (ProfileRead → view). */
 export interface TrapProfile {
   id: string;
   name: string;

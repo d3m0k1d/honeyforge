@@ -4,15 +4,17 @@ import {
   AGENT_STATUSES,
   AGENT_STATUS_BY_KEY,
   LEVEL_BY_KEY,
-  PROFILES,
-  PROFILE_BY_ID,
-  SERVICE_BY_KEY,
   formatDate,
   formatEvents,
+  profileIconFor,
+  serviceMeta,
 } from "~/utils/traps";
 
 const store = useTrapsStore();
 const router = useRouter();
+const auth = useAuthStore();
+
+const canManage = computed(() => auth.can("deployments:manage"));
 
 const fields = computed(() => store.visibleFields);
 const hasTraps = computed(() => store.filteredTraps.length > 0);
@@ -22,25 +24,29 @@ function show(key: TrapFieldKey) {
   return store.fieldVisibility[key];
 }
 
-function profileName(profileId: string) {
-  return PROFILE_BY_ID[profileId]?.name ?? profileId;
+function profileName(trap: Trap) {
+  return store.profilesById[trap.profileId]?.name ?? "—";
 }
 
-function profileIcon(profileId: string) {
-  return PROFILE_BY_ID[profileId]?.icon ?? "i-lucide-shield-alert";
-}
-
-function profileDefault(trap: Trap) {
-  return PROFILES.find((profile) => profile.id === trap.profileId)?.services ?? [];
+function profileIcon(trap: Trap) {
+  return (
+    store.profileIconById[trap.profileId] ??
+    profileIconFor(trap.services.map((service) => service.key))
+  );
 }
 
 function visibleServices(trap: Trap) {
-  const fallback =
-    trap.services.length > 0
-      ? trap.services
-      : profileDefault(trap).map((service) => ({ ...service }));
+  return trap.services.filter(
+    (service) => store.serviceVisibility[service.key] ?? true,
+  );
+}
 
-  return fallback.filter((service) => store.serviceVisibility[service.key]);
+function levelInfo(trap: Trap) {
+  return LEVEL_BY_KEY[trap.level] ?? LEVEL_BY_KEY.low;
+}
+
+function statusInfo(trap: Trap) {
+  return AGENT_STATUS_BY_KEY[trap.agentStatus] ?? AGENT_STATUS_BY_KEY.offline;
 }
 
 function sortIndicator(field: TrapFieldKey) {
@@ -62,12 +68,16 @@ function openTrap(trap: Trap) {
 function rowItems(trap: Trap) {
   return [
     { label: "Подробнее", icon: "i-lucide-eye", onSelect: () => openTrap(trap) },
-    {
-      label: "Удалить",
-      icon: "i-lucide-trash-2",
-      color: "error" as const,
-      onSelect: () => store.requestDelete(trap.id),
-    },
+    ...(canManage.value
+      ? [
+          {
+            label: "Удалить",
+            icon: "i-lucide-trash-2",
+            color: "error" as const,
+            onSelect: () => store.requestDelete(trap.id),
+          },
+        ]
+      : []),
   ];
 }
 </script>
@@ -121,7 +131,7 @@ function rowItems(trap: Trap) {
               <div
                 class="flex size-8 shrink-0 items-center justify-center rounded-md border border-default bg-elevated"
               >
-                <UIcon :name="profileIcon(trap.profileId)" class="size-4 text-primary" />
+                <UIcon :name="profileIcon(trap)" class="size-4 text-primary" />
               </div>
               <div class="min-w-0">
                 <p class="truncate text-sm font-medium text-highlighted">
@@ -137,7 +147,7 @@ function rowItems(trap: Trap) {
               color="neutral"
               variant="subtle"
               size="sm"
-              :label="profileName(trap.profileId)"
+              :label="profileName(trap)"
             />
           </td>
 
@@ -147,13 +157,13 @@ function rowItems(trap: Trap) {
                 v-for="service in visibleServices(trap)"
                 :key="service.key"
                 class="inline-flex items-center gap-1 rounded-md border border-default bg-elevated/60 px-1.5 py-0.5 text-[11px] text-toned"
-                :title="`${SERVICE_BY_KEY[service.key].label} · порт ${service.port}`"
+                :title="`${serviceMeta(service.key).label} · порт ${service.port}`"
               >
                 <UIcon
-                  :name="SERVICE_BY_KEY[service.key].icon"
+                  :name="serviceMeta(service.key).icon"
                   class="size-3 text-muted"
                 />
-                {{ SERVICE_BY_KEY[service.key].label }}
+                {{ serviceMeta(service.key).label }}
               </span>
               <span v-if="!visibleServices(trap).length" class="text-xs text-dimmed">
                 —
@@ -170,10 +180,10 @@ function rowItems(trap: Trap) {
 
           <td v-if="show('level')" class="px-4 py-2.5">
             <UBadge
-              :color="LEVEL_BY_KEY[trap.level].color"
+              :color="levelInfo(trap).color"
               variant="subtle"
               size="sm"
-              :label="LEVEL_BY_KEY[trap.level].label"
+              :label="levelInfo(trap).label"
             />
           </td>
 
@@ -181,10 +191,10 @@ function rowItems(trap: Trap) {
             <span class="inline-flex items-center gap-2">
               <span
                 class="size-1.5 shrink-0 rounded-full"
-                :class="AGENT_STATUS_BY_KEY[trap.agentStatus].dot"
+                :class="statusInfo(trap).dot"
               />
               <span class="text-xs text-toned">
-                {{ AGENT_STATUS_BY_KEY[trap.agentStatus].label }}
+                {{ statusInfo(trap).label }}
               </span>
             </span>
           </td>

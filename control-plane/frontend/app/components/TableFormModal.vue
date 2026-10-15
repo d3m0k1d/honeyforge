@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Column } from "~/types/database";
+import { isValidIdentifier } from "~/utils/schema";
 
 const store = useTablesStore();
 
@@ -14,6 +15,21 @@ const name = ref("");
 const columns = ref<Column[]>([]);
 
 const isEdit = computed(() => Boolean(store.tableModal.tableId));
+
+// backend принимает только SQL-идентификаторы (как в реальной схеме БД)
+const nameInvalid = computed(
+  () => Boolean(name.value.trim()) && !isValidIdentifier(name.value),
+);
+
+const invalidColumns = computed(() =>
+  columns.value
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => !isValidIdentifier(column.name)),
+);
+
+const hasErrors = computed(
+  () => nameInvalid.value || invalidColumns.value.length > 0,
+);
 
 const tableRefOptions = computed(() => [
   { label: "Нет", value: "__none__" },
@@ -80,7 +96,7 @@ function save() {
   const prepared = columns.value.filter((column) => column.name.trim());
   const result = prepared.length ? prepared : columns.value;
 
-  if (!tableName) return;
+  if (!tableName || hasErrors.value) return;
 
   if (store.tableModal.tableId) {
     store.updateTable(store.tableModal.tableId, tableName, result);
@@ -106,7 +122,13 @@ function save() {
             v-model="name"
             placeholder="например, honeypot_events"
             class="w-full font-mono"
+            :color="nameInvalid ? 'error' : undefined"
           />
+          <template #help>
+            <span v-if="nameInvalid" class="text-error text-xs">
+              Латиница, цифры и _, без пробелов (как в SQL)
+            </span>
+          </template>
         </UFormField>
 
         <div class="flex items-center justify-between">
@@ -136,6 +158,7 @@ function save() {
                 placeholder="имя_поля"
                 size="sm"
                 class="flex-1 font-mono"
+                :color="!isValidIdentifier(column.name) && column.name.trim() ? 'error' : undefined"
               />
               <UButton
                 icon="i-lucide-trash-2"
@@ -223,7 +246,7 @@ function save() {
         <UButton
           icon="i-lucide-check"
           :label="isEdit ? 'Сохранить' : 'Создать'"
-          :disabled="!name.trim()"
+          :disabled="!name.trim() || hasErrors"
           @click="save"
         />
       </div>

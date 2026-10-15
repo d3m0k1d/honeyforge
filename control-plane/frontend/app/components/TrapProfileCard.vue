@@ -1,14 +1,21 @@
 <script setup lang="ts">
 import type { TrapProfile } from "~/types/traps";
-import { LEVEL_BY_KEY, SERVICE_BY_KEY } from "~/utils/traps";
+import { LEVEL_BY_KEY, serviceMeta } from "~/utils/traps";
 
-const props = defineProps<{ profile: TrapProfile; count: number }>();
+const props = withDefaults(
+  defineProps<{ profile: TrapProfile; count: number; canConfigure?: boolean }>(),
+  { canConfigure: true },
+);
 
 const emit = defineEmits<{ (e: "configure", profile: TrapProfile): void }>();
 
-const level = computed(() => LEVEL_BY_KEY[props.profile.level]);
+const level = computed(
+  () => LEVEL_BY_KEY[props.profile.level] ?? LEVEL_BY_KEY.low,
+);
 
 function onConfigure() {
+  if (!props.canConfigure) return;
+
   emit("configure", props.profile);
 }
 </script>
@@ -54,8 +61,8 @@ function onConfigure() {
         :key="service.key"
         class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/60 px-2 py-1 text-[11px] text-toned"
       >
-        <UIcon :name="SERVICE_BY_KEY[service.key].icon" class="size-3 text-muted" />
-        {{ SERVICE_BY_KEY[service.key].label }}
+        <UIcon :name="serviceMeta(service.key).icon" class="size-3 text-muted" />
+        {{ serviceMeta(service.key).label }}
         <span class="font-mono text-dimmed">{{ service.port }}</span>
       </span>
     </div>
@@ -82,6 +89,7 @@ function onConfigure() {
           size="sm"
           icon="i-lucide-settings"
           label="Настроить"
+          :disabled="!canConfigure"
           @click="onConfigure"
         />
       </div>

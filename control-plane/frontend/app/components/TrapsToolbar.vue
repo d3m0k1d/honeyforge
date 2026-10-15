@@ -140,7 +140,7 @@ function onSortSelect(field: string) {
               <UCheckbox
                 v-for="service in SERVICES"
                 :key="service.key"
-                :model-value="store.serviceVisibility[service.key]"
+                :model-value="store.serviceVisibility[service.key] ?? true"
                 :label="service.short"
                 @update:model-value="store.setServiceVisibility(service.key, $event as boolean)"
               />

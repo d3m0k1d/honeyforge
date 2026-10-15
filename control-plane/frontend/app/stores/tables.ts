@@ -6,10 +6,15 @@ import type {
   TableSchema,
   TabKey,
 } from "~/types/database";
+import type { SqlQueryResult } from "~/types/api";
+import { resources } from "~/api/resources";
+import { toApiError } from "~/api/errors";
 import {
   TABLE_COLORS,
   createId,
   emptyColumn,
+  parseWorkspace,
+  serializeWorkspace,
 } from "~/utils/schema";
 
 function seedTables(): TableSchema[] {
@@ -190,12 +195,24 @@ function seedRows(): Record<string, TableRow[]> {
   };
 }
 
+const DEFAULT_WORKSPACE_NAME = "Основная";
+
 export const useTablesStore = defineStore("tables", () => {
-  const tables = ref<TableSchema[]>(seedTables());
-  const rows = ref<Record<string, TableRow[]>>(seedRows());
-  const selectedTableId = ref<string | null>(tables.value[0]?.id ?? null);
+  const tables = ref<TableSchema[]>([]);
+  const rows = ref<Record<string, TableRow[]>>({});
+  const selectedTableId = ref<string | null>(null);
   const activeTab = ref<TabKey>("constructor");
   const search = ref("");
+
+  const workspaceId = ref<string | null>(null);
+  const workspaceName = ref(DEFAULT_WORKSPACE_NAME);
+  const loading = ref(false);
+  const saving = ref(false);
+  const error = ref<string | null>(null);
+
+  const queryResult = ref<SqlQueryResult | null>(null);
+  const queryError = ref<string | null>(null);
+  const queryLoading = ref(false);
 
   const tableModal = reactive<{ open: boolean; tableId: string | null }>({
     open: false,
@@ -249,6 +266,123 @@ export const useTablesStore = defineStore("tables", () => {
     () => tables.value.find((table) => table.id === pendingDeleteId.value) ?? null,
   );
 
+  // ── Загрузка/сохранение workspace ────────────────────────────────────────
+
+  let loaded = false;
+  let dirty = false;
+  let flushing = false;
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function load(force = false): Promise<void> {
+    if (loaded && !force) return;
+
+    loading.value = true;
+    error.value = null;
+
+    try {
+      let list = await resources.databases.list({ cache: { force } });
+
+      if (!list.length) {
+        // первый заход — создаём рабочую область с демо-схемой
+        const created = await resources.databases.create({
+          name: DEFAULT_WORKSPACE_NAME,
+          description: "Схема конструктора БД",
+          tables: serializeWorkspace(seedTables(), seedRows()),
+        });
+
+        list = [created];
+      }
+
+      const workspace = list[0]!;
+
+      workspaceId.value = workspace.id;
+      workspaceName.value = workspace.name;
+
+      const parsed = parseWorkspace(workspace);
+
+      tables.value = parsed.tables;
+      rows.value = parsed.rows;
+      selectedTableId.value = tables.value[0]?.id ?? null;
+      loaded = true;
+    } catch (err) {
+      error.value = toApiError(err).message;
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  async function flush(): Promise<void> {
+    if (flushing || !dirty || !workspaceId.value) return;
+
+    flushing = true;
+    saving.value = true;
+
+    try {
+      do {
+        dirty = false;
+        await resources.databases.update(workspaceId.value, {
+          name: workspaceName.value,
+          tables: serializeWorkspace(tables.value, rows.value),
+        });
+        error.value = null;
+      } while (dirty);
+    } catch (err) {
+      error.value = toApiError(err).message;
+    } finally {
+      flushing = false;
+      saving.value = false;
+    }
+  }
+
+  function persist(options: { immediate?: boolean } = {}) {
+    if (!workspaceId.value) return;
+
+    dirty = true;
+
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+
+    if (options.immediate) {
+      void flush();
+      return;
+    }
+
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      void flush();
+    }, 400);
+  }
+
+  // ── SQL-запросы (read-only на сервере) ───────────────────────────────────
+
+  async function runQuery(sql: string, limit = 1000): Promise<void> {
+    if (!workspaceId.value) return;
+
+    queryLoading.value = true;
+    queryError.value = null;
+
+    try {
+      queryResult.value = await resources.databases.query(workspaceId.value, {
+        sql,
+        limit,
+      });
+    } catch (err) {
+      queryError.value = toApiError(err).message;
+      queryResult.value = null;
+    } finally {
+      queryLoading.value = false;
+    }
+  }
+
+  function clearQuery() {
+    queryResult.value = null;
+    queryError.value = null;
+  }
+
+  // ── Операции над схемой (локально + persist) ────────────────────────────
+
   function getTable(id: string | null) {
     if (!id) return null;
     return tables.value.find((table) => table.id === id) ?? null;
@@ -273,13 +407,14 @@ export const useTablesStore = defineStore("tables", () => {
       name: name.trim() || "untitled",
       color: TABLE_COLORS[tables.value.length % TABLE_COLORS.length]!,
       columns: columns.length ? columns : [emptyColumn()],
-      x: 80 + (tables.value.length % 4) * 60,
-      y: 80 + (tables.value.length % 4) * 50,
+      x: 80 + (tables.value.length % 4) * 340,
+      y: 80 + (tables.value.length % 3) * 80,
     };
 
     tables.value.push(table);
     rows.value[table.id] = [];
     selectedTableId.value = table.id;
+    persist({ immediate: true });
     return table;
   }
 
@@ -287,7 +422,10 @@ export const useTablesStore = defineStore("tables", () => {
     const table = getTable(id);
     const next = name.trim();
 
-    if (table && next) table.name = next;
+    if (table && next) {
+      table.name = next;
+      persist({ immediate: true });
+    }
   }
 
   function deleteTable(id: string) {
@@ -309,6 +447,8 @@ export const useTablesStore = defineStore("tables", () => {
     if (selectedTableId.value === id) {
       selectedTableId.value = tables.value[0]?.id ?? null;
     }
+
+    persist({ immediate: true });
   }
 
   function moveTable(id: string, x: number, y: number) {
@@ -318,6 +458,7 @@ export const useTablesStore = defineStore("tables", () => {
 
     table.x = Math.max(0, Math.round(x));
     table.y = Math.max(0, Math.round(y));
+    persist();
   }
 
   function updateTable(id: string, name: string, columns: Column[]) {
@@ -333,6 +474,8 @@ export const useTablesStore = defineStore("tables", () => {
         column.references = undefined;
       }
     }
+
+    persist({ immediate: true });
   }
 
   function addColumn(tableId: string, type: ColumnType = "VARCHAR") {
@@ -341,6 +484,7 @@ export const useTablesStore = defineStore("tables", () => {
     if (!table) return;
 
     table.columns.push({ ...emptyColumn(), type });
+    persist({ immediate: true });
   }
 
   function removeColumn(tableId: string, columnId: string) {
@@ -350,7 +494,15 @@ export const useTablesStore = defineStore("tables", () => {
 
     const index = table.columns.findIndex((column) => column.id === columnId);
 
-    if (index >= 0) table.columns.splice(index, 1);
+    if (index >= 0) {
+      table.columns.splice(index, 1);
+
+      for (const row of rows.value[tableId] ?? []) {
+        delete row[columnId];
+      }
+
+      persist({ immediate: true });
+    }
   }
 
   function addRow(tableId: string) {
@@ -367,6 +519,7 @@ export const useTablesStore = defineStore("tables", () => {
     }
 
     rows.value[tableId]!.push(row);
+    persist({ immediate: true });
   }
 
   function updateCell(
@@ -380,6 +533,7 @@ export const useTablesStore = defineStore("tables", () => {
     if (!list || !list[rowIndex]) return;
 
     list[rowIndex]![columnId] = value;
+    persist();
   }
 
   function deleteRow(tableId: string, rowIndex: number) {
@@ -388,6 +542,7 @@ export const useTablesStore = defineStore("tables", () => {
     if (!list) return;
 
     list.splice(rowIndex, 1);
+    persist({ immediate: true });
   }
 
   function openCreateModal() {
@@ -430,6 +585,17 @@ export const useTablesStore = defineStore("tables", () => {
     tableModal,
     pendingDeleteId,
     deletingTable,
+    workspaceId,
+    workspaceName,
+    loading,
+    saving,
+    error,
+    queryResult,
+    queryError,
+    queryLoading,
+    load,
+    runQuery,
+    clearQuery,
     getTable,
     selectTable,
     openTable,

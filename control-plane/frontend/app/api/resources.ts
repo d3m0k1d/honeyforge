@@ -14,8 +14,11 @@ import type {
   AlertRead,
   AlertRuleCreate,
   AlertRuleRead,
+  AnalyticsOverview,
   AuditLogRead,
   CommandRead,
+  DatabaseWorkspaceRead,
+  DatabaseWorkspaceWrite,
   DeploymentAction,
   DeploymentCreate,
   DeploymentRead,
@@ -27,9 +30,11 @@ import type {
   ProfileCreate,
   ProfileRead,
   ProfileUpdate,
+  QEMUImageRead,
   ResetRequest,
   SnapshotCreate,
   SnapshotRead,
+  SqlQueryResult,
 } from "~/types/api";
 
 /** Свободная схема каталога типов ловушек (backend отдаёт object с любыми полями). */
@@ -72,6 +77,22 @@ export interface AgentEventsQuery extends PageQuery {
 
 export interface HoneytokensQuery extends PageQuery {
   active?: boolean;
+}
+
+/** Фильтры GET /analytics/overview (совпадают с /events). */
+export interface AnalyticsQuery {
+  since?: string;
+  until?: string;
+  agent_id?: string;
+  src?: string;
+  event?: string;
+  service?: string;
+}
+
+/** Тело POST /databases/{id}/query. */
+export interface SqlQueryRequest {
+  sql: string;
+  limit?: number;
 }
 
 export interface AuditQuery extends PageQuery {
@@ -155,6 +176,14 @@ export const resources = {
       cachedGet<CommandRead[]>(`/deployments/${deploymentId}/commands`, {
         ...options,
         cache: { ttl: 10_000, staleTtl: 30_000, tags: ["deployments", "commands"], swr: false, ...options.cache },
+      }),
+  },
+
+  qemuImages: {
+    list: (options: CacheOpts = {}) =>
+      cachedGet<QEMUImageRead[]>("/qemu-images", {
+        ...options,
+        cache: { ttl: 60_000, staleTtl: 5 * 60_000, tags: ["qemu-images"], ...options.cache },
       }),
   },
 
@@ -267,8 +296,46 @@ export const resources = {
       cachedGet<AuditLogRead[]>("/audit", {
         params: query,
         ...options,
-        cache: { ttl: 30_000, staleTtl: 2 * 60_000, tags: ["audit"], ...options.cache },
+        cache: { ttl: 30_000, staleTtl: 60_000, tags: ["audit"], ...options.cache },
       }),
+  },
+
+  analytics: {
+    overview: (query: AnalyticsQuery = {}, options: CacheOpts = {}) =>
+      cachedGet<AnalyticsOverview>("/analytics/overview", {
+        params: query,
+        ...options,
+        cache: {
+          ttl: 15_000,
+          staleTtl: 60_000,
+          tags: ["analytics", "events"],
+          ...options.cache,
+        },
+      }),
+  },
+
+  databases: {
+    list: (options: CacheOpts = {}) =>
+      cachedGet<DatabaseWorkspaceRead[]>("/databases", {
+        ...options,
+        cache: { ...LIST_CACHE, tags: ["databases"], ...options.cache },
+      }),
+
+    create: (data: DatabaseWorkspaceWrite) =>
+      post<DatabaseWorkspaceRead>("/databases", data, {
+        invalidate: ["databases"],
+      }),
+
+    update: (databaseId: string, data: DatabaseWorkspaceWrite) =>
+      put<DatabaseWorkspaceRead>(`/databases/${databaseId}`, data, {
+        invalidate: ["databases"],
+      }),
+
+    remove: (databaseId: string) =>
+      del(`/databases/${databaseId}`, { invalidate: ["databases"] }),
+
+    query: (databaseId: string, data: SqlQueryRequest) =>
+      post<SqlQueryResult>(`/databases/${databaseId}/query`, data),
   },
 
   health: (options: CacheOpts = {}) =>

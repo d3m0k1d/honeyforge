@@ -9,6 +9,9 @@ class TableDefinition(BaseModel):
     name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     columns: list[dict[str, Any]] = Field(default_factory=list, max_length=256)
     rows: list[dict[str, Any]] = Field(default_factory=list, max_length=10_000)
+    # UI-метаданные конструктора (позиция на канвасе, цвет, id) —
+    # хранятся как есть и возвращаются клиенту при чтении
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkspaceCreate(BaseModel):

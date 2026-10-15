@@ -4,7 +4,7 @@ import type {
   TrapEventAction,
   TrapEventSeverity,
 } from "~/types/traps";
-import { ACTION_LABELS, SEVERITY_LABELS, SERVICES } from "~/utils/traps";
+import { SEVERITY_LABELS } from "~/utils/traps";
 import { exportData } from "~/utils/export";
 import { PERIODS } from "~/stores/analytics";
 
@@ -13,21 +13,21 @@ const toast = useToast();
 
 const allOption = { label: "Все", value: "all" };
 
-const serviceItems = [
+const serviceItems = computed(() => [
   allOption,
-  ...SERVICES.map((service) => ({
-    label: service.label,
-    value: service.key,
+  ...store.serviceOptions.map((option) => ({
+    label: option.label,
+    value: option.value as ServiceKey,
   })),
-];
+]);
 
-const actionItems = [
+const actionItems = computed(() => [
   allOption,
-  ...Object.entries(ACTION_LABELS).map(([key, label]) => ({
-    label,
-    value: key,
+  ...store.actionOptions.map((option) => ({
+    label: option.label,
+    value: option.value as TrapEventAction,
   })),
-];
+]);
 
 const severityItems = [
   allOption,
@@ -44,7 +44,7 @@ const periodItems = PERIODS.map((item) => ({
 
 const exportItems = computed(() => [
   {
-    label: `Выгрузить ${store.sortedEvents.length} событий`,
+    label: `Выгрузить ${store.exportEvents.length} событий`,
     type: "label" as const,
     class: "text-dimmed",
   },
@@ -81,7 +81,7 @@ const exportItems = computed(() => [
   },
 ]);
 
-const exportEmpty = computed(() => store.sortedEvents.length === 0);
+const exportEmpty = computed(() => store.exportEvents.length === 0);
 
 function runExport(format: "csv" | "tsv" | "txt" | "json" | "xml" | "xls") {
   const base = store.activeTrap
@@ -89,7 +89,7 @@ function runExport(format: "csv" | "tsv" | "txt" | "json" | "xml" | "xls") {
     : "events-all";
 
   exportData(
-    store.sortedEvents,
+    store.exportEvents,
     [
       { key: "ts", label: "Время", value: (row) => row.ts },
       { key: "source", label: "IP атакующего", value: (row) => row.source },
@@ -106,7 +106,7 @@ function runExport(format: "csv" | "tsv" | "txt" | "json" | "xml" | "xls") {
 
   toast.add({
     title: `Экспорт завершён`,
-    description: `${store.sortedEvents.length} событий · ${format.toUpperCase()}`,
+    description: `${store.exportEvents.length} событий · ${format.toUpperCase()}`,
     color: "success",
     icon: "i-lucide-download",
   });

@@ -3,18 +3,21 @@ definePageMeta({ permission: "honeypots:read" });
 
 import type { Trap } from "~/types/traps";
 import {
-  AGENT_BY_ID,
-  AGENT_STATUSES,
+  AGENT_STATUS_BY_KEY,
   LEVEL_BY_KEY,
-  PROFILES,
-  SERVICE_BY_KEY,
   formatDateTime,
   formatEvents,
+  profileIconFor,
+  serviceMeta,
+  stateLabel,
 } from "~/utils/traps";
 
 const store = useTrapsStore();
 const route = useRoute();
 const toast = useToast();
+const auth = useAuthStore();
+
+const canManage = computed(() => auth.can("deployments:manage"));
 
 const trapId = computed(() => String(route.params.id));
 const trap = computed<Trap | null>(() => store.getTrap(trapId.value));
@@ -26,19 +29,33 @@ const deleteOpen = computed({
   },
 });
 
-const profile = computed(
-  () => PROFILES.find((item) => item.id === trap.value?.profileId) ?? null,
+const profile = computed(() =>
+  trap.value ? (store.profilesById[trap.value.profileId] ?? null) : null,
 );
 const agent = computed(() =>
-  trap.value ? (AGENT_BY_ID[trap.value.agentId] ?? null) : null,
+  trap.value ? (store.agentsById[trap.value.agentId] ?? null) : null,
 );
 const level = computed(() =>
-  trap.value ? LEVEL_BY_KEY[trap.value.level] : null,
+  trap.value ? (LEVEL_BY_KEY[trap.value.level] ?? LEVEL_BY_KEY.low) : null,
 );
 const status = computed(() =>
   trap.value
-    ? AGENT_STATUSES.find((item) => item.key === trap.value!.agentStatus) ?? null
+    ? AGENT_STATUS_BY_KEY[trap.value.agentStatus] ??
+      AGENT_STATUS_BY_KEY.offline
     : null,
+);
+
+const trapIcon = computed(() => {
+  if (!trap.value) return "i-lucide-shield-alert";
+
+  return (
+    store.profileIconById[trap.value.profileId] ??
+    profileIconFor(trap.value.services.map((service) => service.key))
+  );
+});
+
+const isRunning = computed(
+  () => trap.value?.desiredState === "running" && !store.pending,
 );
 
 const severityColor: Record<string, "neutral" | "warning" | "error"> = {
@@ -51,21 +68,87 @@ onMounted(() => {
   store.load();
 });
 
-function toggleStatus() {
-  if (!trap.value) return;
+async function toggleStatus() {
+  if (!trap.value || store.pending) return;
 
-  const next = trap.value.agentStatus === "online" ? "offline" : "online";
+  const target = trap.value;
+  const starting = target.desiredState !== "running";
+  const updated = await store.runAction(
+    target.id,
+    starting ? "start" : "stop",
+  );
 
-  store.setAgentStatus(trap.value.id, next);
+  if (updated) {
+    toast.add({
+      title: starting
+        ? `Ловушка ${target.name}: запуск`
+        : `Ловушка ${target.name}: остановка`,
+      description: "Команда поставлена в очередь агенту",
+      color: starting ? "success" : "warning",
+      icon: starting ? "i-lucide-play" : "i-lucide-circle-parking",
+    });
+    return;
+  }
 
-  toast.add({
-    title:
-      next === "online"
-        ? `Ловушка ${trap.value.name} запущена`
-        : `Ловушка ${trap.value.name} остановлена`,
-    color: next === "online" ? "success" : "warning",
-    icon: next === "online" ? "i-lucide-play" : "i-lucide-circle-parking",
-  });
+  if (store.error) {
+    toast.add({
+      title: "Команда не выполнена",
+      description: store.error,
+      color: "error",
+      icon: "i-lucide-triangle-alert",
+    });
+  }
+}
+
+async function resync() {
+  if (!trap.value || store.pending) return;
+
+  const target = trap.value;
+  const updated = await store.runAction(target.id, "reconcile");
+
+  if (updated) {
+    toast.add({
+      title: `Ловушка ${target.name}: пересинхронизация`,
+      description: "Команда reconcile поставлена в очередь",
+      color: "success",
+      icon: "i-lucide-refresh-cw",
+    });
+    return;
+  }
+
+  if (store.error) {
+    toast.add({
+      title: "Команда не выполнена",
+      description: store.error,
+      color: "error",
+      icon: "i-lucide-triangle-alert",
+    });
+  }
+}
+
+async function confirmDelete() {
+  const removed = await store.confirmDelete();
+
+  deleteOpen.value = false;
+
+  if (removed) {
+    toast.add({
+      title: `Ловушка ${removed.name} удалена`,
+      color: "success",
+      icon: "i-lucide-trash-2",
+    });
+    navigateTo("/traps");
+    return;
+  }
+
+  if (store.error) {
+    toast.add({
+      title: "Не удалось удалить ловушку",
+      description: store.error,
+      color: "error",
+      icon: "i-lucide-triangle-alert",
+    });
+  }
 }
 </script>
 
@@ -87,7 +170,7 @@ function toggleStatus() {
           <div
             class="flex size-11 shrink-0 items-center justify-center rounded-lg border border-default bg-elevated"
           >
-            <UIcon :name="profile?.icon" class="size-5 text-primary" />
+            <UIcon :name="trapIcon" class="size-5 text-primary" />
           </div>
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
@@ -112,21 +195,32 @@ function toggleStatus() {
               </span>
             </div>
             <p class="font-mono text-[10px] text-dimmed">
-              {{ trap.id }} · создана {{ formatDateTime(trap.createdAt) }}
+              {{ trap.honeypotType }} · создана {{ formatDateTime(trap.createdAt) }}
             </p>
           </div>
         </div>
       </div>
 
-      <div class="flex flex-wrap gap-2">
+      <div v-if="canManage" class="flex flex-wrap gap-2">
         <UButton
           class="cursor-pointer"
           color="neutral"
           variant="outline"
           size="sm"
-          :icon="trap.agentStatus === 'online' ? 'i-lucide-circle-parking' : 'i-lucide-play'"
-          :label="trap.agentStatus === 'online' ? 'Остановить' : 'Запустить'"
+          :icon="isRunning ? 'i-lucide-circle-parking' : 'i-lucide-play'"
+          :label="isRunning ? 'Остановить' : 'Запустить'"
+          :loading="store.pending"
           @click="toggleStatus"
+        />
+        <UButton
+          class="cursor-pointer"
+          color="neutral"
+          variant="outline"
+          size="sm"
+          icon="i-lucide-refresh-cw"
+          label="Пересинхронизировать"
+          :loading="store.pending"
+          @click="resync"
         />
         <UButton
           class="cursor-pointer"
@@ -139,6 +233,15 @@ function toggleStatus() {
         />
       </div>
     </div>
+
+    <UAlert
+      v-if="trap.lastError"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      title="Ошибка развёртывания"
+      :description="trap.lastError"
+    />
 
     <div class="grid gap-4 lg:grid-cols-3">
       <UCard class="lg:col-span-1">
@@ -156,21 +259,43 @@ function toggleStatus() {
         <dl class="mt-4 space-y-2.5 text-xs">
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">Профиль</dt>
-            <dd class="text-highlighted">{{ profile?.name ?? trap.profileId }}</dd>
+            <dd class="text-highlighted">
+              {{ profile?.name ?? (trap.profileId || "—") }}
+            </dd>
           </div>
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">Уровень</dt>
             <dd class="text-highlighted">{{ level?.label }}</dd>
           </div>
+          <div class="flex items-center justify-between gap-2">
+            <dt class="text-muted">Тип</dt>
+            <dd class="font-mono text-highlighted">{{ trap.honeypotType }}</dd>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <dt class="text-muted">Драйвер</dt>
+            <dd class="font-mono text-highlighted">{{ trap.driver }}</dd>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <dt class="text-muted">Состояние</dt>
+            <dd class="text-right text-highlighted">
+              <template v-if="trap.desiredState === trap.observedState">
+                {{ stateLabel(trap.observedState) }}
+              </template>
+              <template v-else>
+                {{ stateLabel(trap.desiredState) }} →
+                {{ stateLabel(trap.observedState) }}
+              </template>
+            </dd>
+          </div>
           <div class="flex items-start justify-between gap-2">
             <dt class="text-muted">Порты</dt>
             <dd class="text-right font-mono text-highlighted">
-              {{ trap.services.map((service) => service.port).join(", ") }}
+              {{ trap.services.map((service) => service.port).join(", ") || "—" }}
             </dd>
           </div>
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">Агент</dt>
-            <dd class="text-highlighted">{{ agent?.name ?? trap.agentId }}</dd>
+            <dd class="font-mono text-highlighted">{{ trap.agentId }}</dd>
           </div>
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">События</dt>
@@ -201,11 +326,13 @@ function toggleStatus() {
             class="size-2 rounded-full"
             :class="status?.dot ?? 'bg-dimmed'"
           />
-          <div>
-            <p class="text-sm font-medium text-highlighted">
-              {{ agent?.name ?? "не назначен" }}
+          <div class="min-w-0">
+            <p class="truncate text-sm font-medium text-highlighted">
+              {{ agent?.agent_id ?? trap.agentId }}
             </p>
-            <p class="font-mono text-[10px] text-dimmed">{{ agent?.host }}</p>
+            <p class="font-mono text-[10px] text-dimmed">
+              {{ agent?.online ? "online" : agent ? "offline" : "не найден" }}
+            </p>
           </div>
         </div>
 
@@ -214,21 +341,28 @@ function toggleStatus() {
             <dt class="text-muted">Статус</dt>
             <dd class="text-highlighted">{{ status?.label }}</dd>
           </div>
-          <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">Хост</dt>
-            <dd class="font-mono text-highlighted">{{ agent?.host ?? "—" }}</dd>
+          <div class="flex items-start justify-between gap-2">
+            <dt class="text-muted">Heartbeat</dt>
+            <dd class="text-right font-mono text-highlighted">
+              {{ agent?.last_heartbeat_at ? formatDateTime(agent.last_heartbeat_at) : "—" }}
+            </dd>
+          </div>
+          <div class="flex items-start justify-between gap-2">
+            <dt class="text-muted">Enroll</dt>
+            <dd class="text-right font-mono text-highlighted">
+              {{ agent?.enrolled_at ? formatDateTime(agent.enrolled_at) : "—" }}
+            </dd>
           </div>
           <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">Версия агента</dt>
-            <dd class="font-mono text-highlighted">{{ agent?.version ?? "—" }}</dd>
-          </div>
-          <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">Uptime</dt>
-            <dd class="font-mono text-highlighted">{{ agent?.uptime ?? "—" }}</dd>
+            <dt class="text-muted">Профиль агента</dt>
+            <dd class="text-highlighted">
+              {{ agent?.profile_name ?? "—" }}
+            </dd>
           </div>
         </dl>
 
         <UButton
+          v-if="canManage"
           class="mt-4 cursor-pointer"
           color="neutral"
           variant="outline"
@@ -236,7 +370,8 @@ function toggleStatus() {
           block
           icon="i-lucide-refresh-cw"
           label="Пересинхронизировать"
-          @click="store.setAgentStatus(trap.id, 'syncing')"
+          :loading="store.pending"
+          @click="resync"
         />
       </UCard>
 
@@ -248,18 +383,18 @@ function toggleStatus() {
           </div>
         </template>
 
-        <div class="space-y-1.5">
+        <div v-if="trap.services.length" class="space-y-1.5">
           <div
             v-for="service in trap.services"
             :key="service.key"
             class="flex items-center gap-3 rounded-md border border-default px-3 py-2"
           >
             <UIcon
-              :name="SERVICE_BY_KEY[service.key].icon"
+              :name="serviceMeta(service.key).icon"
               class="size-4 text-dimmed"
             />
             <span class="text-sm text-highlighted">
-              {{ SERVICE_BY_KEY[service.key].label }}
+              {{ serviceMeta(service.key).label }}
             </span>
             <span class="ml-auto font-mono text-xs text-toned tabular-nums">
               :{{ service.port }}
@@ -268,10 +403,11 @@ function toggleStatus() {
         </div>
 
         <div
-          v-if="!trap.services.length"
+          v-else
           class="py-6 text-center text-xs text-dimmed"
         >
-          Сервисы не настроены
+          <p>Виртуальная машина (QEMU)</p>
+          <p class="mt-1 font-mono">{{ trap.honeypotType }}</p>
         </div>
       </UCard>
 
@@ -303,7 +439,7 @@ function toggleStatus() {
               :color="severityColor[event.severity]"
               variant="subtle"
               size="sm"
-              :label="event.service"
+              :label="serviceMeta(event.service).label"
             />
             <span class="font-mono text-[11px] text-muted">
               {{ event.source }}
@@ -313,7 +449,10 @@ function toggleStatus() {
             </span>
           </div>
 
-          <div v-if="!trap.events.length" class="px-3 py-8 text-center text-xs text-dimmed">
+          <div
+            v-if="!trap.events.length"
+            class="px-3 py-8 text-center text-xs text-dimmed"
+          >
             Событий пока нет — ловушка только что создана
           </div>
         </div>
@@ -340,7 +479,8 @@ function toggleStatus() {
             color="error"
             icon="i-lucide-trash-2"
             label="Удалить"
-            @click="store.confirmDelete(); navigateTo('/traps')"
+            :loading="store.pending"
+            @click="confirmDelete"
           />
         </div>
       </template>
@@ -351,12 +491,22 @@ function toggleStatus() {
     <div
       class="flex size-12 items-center justify-center rounded-lg border border-default bg-elevated"
     >
-      <UIcon name="i-lucide-triangle-alert" class="size-6 text-dimmed" />
+      <UIcon
+        :name="store.loading ? 'i-lucide-loader-circle' : 'i-lucide-triangle-alert'"
+        class="size-6 text-dimmed"
+        :class="store.loading ? 'animate-spin' : ''"
+      />
     </div>
     <div>
-      <h1 class="text-sm font-semibold text-highlighted">Ловушка не найдена</h1>
+      <h1 class="text-sm font-semibold text-highlighted">
+        {{ store.loading ? "Загрузка…" : "Ловушка не найдена" }}
+      </h1>
       <p class="mt-1 text-xs text-muted">
-        Возможно, она была удалена или никогда не существовала
+        {{
+          store.loading
+            ? "Получаем данные с control plane"
+            : "Возможно, она была удалена или никогда не существовала"
+        }}
       </p>
     </div>
     <UButton

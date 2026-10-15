@@ -1,29 +1,30 @@
 <script setup lang="ts">
 import type { AnalyticsSortKey, AnalyticsEvent } from "~/stores/analytics";
+import { JOURNAL_PAGE_SIZE } from "~/stores/analytics";
 import {
-  ACTION_LABELS,
   SEVERITY_LABELS,
-  SERVICE_BY_KEY,
+  actionLabel,
   formatDateTime,
+  serviceMeta,
 } from "~/utils/traps";
 
 const store = useAnalyticsStore();
 
-const page = ref(1);
-const pageSize = 25;
+const pageSize = JOURNAL_PAGE_SIZE;
 
-const total = computed(() => store.sortedEvents.length);
+const total = computed(() => store.journalTotal);
 
-const pages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
+const pages = computed(() =>
+  Math.max(1, Math.ceil(total.value / pageSize)),
+);
 
-const pageRows = computed(() => {
-  const start = (page.value - 1) * pageSize;
+const pageRows = computed(() => store.journalSorted);
 
-  return store.sortedEvents.slice(start, start + pageSize);
-});
-
-watch(total, () => {
-  page.value = 1;
+const page = computed({
+  get: () => store.page,
+  set: (value: number) => {
+    void store.setPage(value);
+  },
 });
 
 const severityColor: Record<string, "neutral" | "warning" | "error"> = {
@@ -131,16 +132,16 @@ const rangeEnd = computed(() =>
               class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/60 px-1.5 py-0.5 text-[11px] text-toned"
             >
               <UIcon
-                :name="SERVICE_BY_KEY[event.service]?.icon"
+                :name="serviceMeta(event.service).icon"
                 class="size-3 text-muted"
               />
-              {{ SERVICE_BY_KEY[event.service]?.label ?? event.service }}
+              {{ serviceMeta(event.service).label }}
               <span class="font-mono text-dimmed">{{ event.port }}</span>
             </span>
           </td>
 
           <td class="px-4 py-2.5 text-xs text-toned">
-            {{ ACTION_LABELS[event.action] ?? event.action }}
+            {{ actionLabel(event.action) }}
           </td>
 
           <td class="px-4 py-2.5">

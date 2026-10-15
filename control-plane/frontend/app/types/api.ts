@@ -298,6 +298,51 @@ export interface EventStats {
   generated_at: string;
 }
 
+/** GET /analytics/overview — агрегаты за период с фильтрами. */
+export interface AnalyticsOverview {
+  total: number;
+  by_service: Record<string, number>;
+  by_event: Record<string, number>;
+  top_sources: Record<string, number>;
+  by_level: Record<string, number>;
+  by_geo: Record<string, number>;
+  by_asn: Record<string, number>;
+  unique_sources: number;
+  unique_agents: number;
+  generated_at: string;
+}
+
+/** Определение таблицы в workspace конструктора БД (raw-дикты backend). */
+export interface DatabaseTableDef {
+  name: string;
+  columns: Record<string, unknown>[];
+  rows: Record<string, unknown>[];
+  meta?: Record<string, unknown>;
+}
+
+/** Рабочая область конструктора БД (CRUD /databases). */
+export interface DatabaseWorkspaceRead {
+  id: string;
+  name: string;
+  description: string | null;
+  tables: DatabaseTableDef[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DatabaseWorkspaceWrite {
+  name: string;
+  description?: string | null;
+  tables: DatabaseTableDef[];
+}
+
+/** Ответ POST /databases/{id}/query — только чтение (SELECT/WITH/PRAGMA). */
+export interface SqlQueryResult {
+  columns: string[];
+  rows: unknown[][];
+  affected_rows: number;
+}
+
 export interface HTTPValidationError {
   detail?: ValidationError[];
 }

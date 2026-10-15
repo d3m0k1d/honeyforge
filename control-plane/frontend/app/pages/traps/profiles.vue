@@ -4,17 +4,22 @@ definePageMeta({ permission: "profiles:read" });
 import type { TrapProfile } from "~/types/traps";
 
 const store = useTrapsStore();
+const auth = useAuthStore();
+
+const canManage = computed(() => auth.can("deployments:manage"));
 
 const selected = ref<TrapProfile | null>(null);
 const formOpen = ref(false);
 
-const cards = computed(() => store.trapsByProfile);
+const cards = computed(() => store.profileCards);
 
 onMounted(() => {
   store.load();
 });
 
 function configure(profile: TrapProfile) {
+  if (!canManage.value) return;
+
   selected.value = profile;
   formOpen.value = true;
 }
@@ -57,12 +62,39 @@ function onCreate(trapId: string) {
       </UBadge>
     </div>
 
-    <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <UAlert
+      v-if="store.error"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      :title="store.error"
+    />
+
+    <div
+      v-if="store.loading && !cards.length"
+      class="flex items-center justify-center gap-2 rounded-lg border border-default py-10"
+    >
+      <UIcon
+        name="i-lucide-loader-circle"
+        class="size-4 animate-spin text-dimmed"
+      />
+      <span class="text-xs text-muted">Загрузка профилей…</span>
+    </div>
+
+    <div
+      v-else-if="!cards.length"
+      class="rounded-lg border border-default px-4 py-10 text-center text-xs text-muted"
+    >
+      Профили не найдены — создайте их через API или назначьте агентам
+    </div>
+
+    <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <TrapProfileCard
         v-for="card in cards"
         :key="card.profile.id"
         :profile="card.profile"
         :count="card.count"
+        :can-configure="canManage"
         @configure="configure"
       />
     </div>

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 definePageMeta({ permission: "honeypots:read" });
 
-import { PROFILES } from "~/utils/traps";
+import { profileIconFor } from "~/utils/traps";
 
 const store = useTrapsStore();
 const toast = useToast();
+const auth = useAuthStore();
+
+const canManage = computed(() => auth.can("deployments:manage"));
 
 const deleteOpen = computed({
   get: () => Boolean(store.pendingDeleteId),
@@ -31,29 +34,45 @@ const stats = computed(() => [
   },
   {
     label: "Профилей",
-    value: String(PROFILES.length),
+    value: String(store.profiles.length),
     icon: "i-lucide-blocks",
   },
 ]);
 
-const deletingIcon = computed(
-  () =>
-    PROFILES.find((profile) => profile.id === store.deletingTrap?.profileId)
-      ?.icon ?? "i-lucide-radar",
-);
+const deletingIcon = computed(() => {
+  const trap = store.deletingTrap;
+  if (!trap) return "i-lucide-radar";
+
+  return (
+    store.profileIconById[trap.profileId] ??
+    profileIconFor(trap.services.map((service) => service.key))
+  );
+});
 
 onMounted(() => {
   store.load();
 });
 
-function confirmDelete() {
-  const removed = store.confirmDelete();
+async function confirmDelete() {
+  const removed = await store.confirmDelete();
+
+  deleteOpen.value = false;
 
   if (removed) {
     toast.add({
       title: `Ловушка ${removed.name} удалена`,
       color: "success",
       icon: "i-lucide-trash-2",
+    });
+    return;
+  }
+
+  if (store.error) {
+    toast.add({
+      title: "Не удалось удалить ловушку",
+      description: store.error,
+      color: "error",
+      icon: "i-lucide-triangle-alert",
     });
   }
 }
@@ -70,12 +89,13 @@ function confirmDelete() {
           Ловушки
         </h1>
         <p class="mt-1 max-w-2xl text-sm text-muted">
-          Настроенные honeypot-ловушки платформы: сервисы, порты, уровень
+          Развёрнутые honeypot-ловушки платформы: сервисы, порты, уровень
           эмуляции, состояние агентов и количество перехваченных событий.
         </p>
       </div>
 
       <UButton
+        v-if="canManage"
         class="cursor-pointer"
         icon="i-lucide-plus"
         label="Создать ловушку"
@@ -83,34 +103,67 @@ function confirmDelete() {
       />
     </div>
 
-    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <UCard v-for="item in stats" :key="item.label" :ui="{ body: 'p-4' }">
-        <div class="flex items-center gap-3">
-          <div
-            class="flex size-9 items-center justify-center rounded-md border border-default bg-elevated"
-          >
-            <UIcon :name="item.icon" class="size-4 text-primary" />
-          </div>
-          <div>
-            <p class="text-eyebrow">
-              {{ item.label }}
-            </p>
-            <p class="mt-0.5 font-mono text-lg text-highlighted tabular-nums">
-              {{ item.value }}
-            </p>
-          </div>
-        </div>
-      </UCard>
+    <UAlert
+      v-if="store.error && !store.pending"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      :title="store.error"
+    >
+      <template #actions>
+        <UButton
+          class="cursor-pointer"
+          color="error"
+          variant="soft"
+          size="xs"
+          icon="i-lucide-refresh-cw"
+          label="Повторить"
+          @click="store.load(true)"
+        />
+      </template>
+    </UAlert>
+
+    <div
+      v-if="store.loading && !store.traps.length"
+      class="flex items-center justify-center gap-2 rounded-lg border border-default py-10"
+    >
+      <UIcon
+        name="i-lucide-loader-circle"
+        class="size-4 animate-spin text-dimmed"
+      />
+      <span class="text-xs text-muted">Загрузка ловушек…</span>
     </div>
 
-    <TrapsToolbar />
+    <template v-else>
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <UCard v-for="item in stats" :key="item.label" :ui="{ body: 'p-4' }">
+          <div class="flex items-center gap-3">
+            <div
+              class="flex size-9 items-center justify-center rounded-md border border-default bg-elevated"
+            >
+              <UIcon :name="item.icon" class="size-4 text-primary" />
+            </div>
+            <div>
+              <p class="text-eyebrow">
+                {{ item.label }}
+              </p>
+              <p class="mt-0.5 font-mono text-lg text-highlighted tabular-nums">
+                {{ item.value }}
+              </p>
+            </div>
+          </div>
+        </UCard>
+      </div>
 
-    <TrapsTable />
+      <TrapsToolbar />
+
+      <TrapsTable />
+    </template>
 
     <UModal
       v-model:open="deleteOpen"
       title="Удалить ловушку?"
-      description="Действие необратимо: события и конфигурация будут потеряны"
+      description="Действие необратимо: конфигурация будет уничтожена"
       :ui="{ content: 'max-w-md' }"
     >
       <template #body>
@@ -128,7 +181,7 @@ function confirmDelete() {
               {{ store.deletingTrap.name }}
             </p>
             <p class="font-mono text-[10px] text-dimmed">
-              {{ store.deletingTrap.id }}
+              {{ store.deletingTrap.honeypotType }}
             </p>
           </div>
         </div>
@@ -148,6 +201,7 @@ function confirmDelete() {
             color="error"
             icon="i-lucide-trash-2"
             label="Удалить"
+            :loading="store.pending"
             @click="confirmDelete"
           />
         </div>

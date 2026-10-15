@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ChartData, ChartOptions } from "chart.js";
-import { SEVERITY_LABELS, formatDateTime } from "~/utils/traps";
+import { SEVERITY_LABELS, actionLabel, formatDateTime } from "~/utils/traps";
+import { PERIODS } from "~/stores/analytics";
 
 const GRID = "rgba(148, 163, 184, 0.12)";
 const AXIS = "#94a3b8";
@@ -8,33 +9,18 @@ const AXIS = "#94a3b8";
 const auth = useAuthStore();
 const settings = useSettingsStore();
 const trapsStore = useTrapsStore();
+const analytics = useAnalyticsStore();
 
 // туманность/липкий герой — только для радиального режима навигации;
 // при обычной навигации главный экран рендерится «по-простому»
 const fogMode = computed(() => settings.navMode === "radial");
 
-function rand(min: number, max: number) {
-  return Math.round(min + Math.random() * (max - min));
-}
-
-function timeLabel(offsetMinutes: number) {
-  const d = new Date(Date.now() - offsetMinutes * 60_000);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-const lineLabels = ref<string[]>(
-  Array.from({ length: 14 }, (_, i) => timeLabel((13 - i) * 5)),
-);
-const lineValues = ref<number[]>(
-  Array.from({ length: 14 }, () => rand(30, 150)),
-);
-
 const lineData = computed<ChartData<"line">>(() => ({
-  labels: [...lineLabels.value],
+  labels: analytics.timeline.labels,
   datasets: [
     {
       label: "События",
-      data: [...lineValues.value],
+      data: analytics.timeline.values,
       borderColor: "#10b981",
       backgroundColor: "rgba(16, 185, 129, 0.15)",
       fill: true,
@@ -46,34 +32,30 @@ const lineData = computed<ChartData<"line">>(() => ({
   ],
 }));
 
-const vectors = reactive<Record<string, number>>({
-  "SSH Bruteforce": 34,
-  "Web Scan": 28,
-  "Exploit Kit": 19,
-  "Malware Drop": 12,
-});
+const DONUT_COLORS = ["#10b981", "#38bdf8", "#f59e0b", "#f43f5e", "#8b5cf6"];
 
 const donutData = computed<ChartData<"doughnut">>(() => ({
-  labels: Object.keys(vectors),
+  labels: analytics.actionStats.map((item) => actionLabel(item.label)),
   datasets: [
     {
-      data: Object.values(vectors),
-      backgroundColor: ["#10b981", "#38bdf8", "#f59e0b", "#f43f5e"],
+      data: analytics.actionStats.map((item) => item.count),
+      backgroundColor: analytics.actionStats.map(
+        (_, index) => DONUT_COLORS[index % DONUT_COLORS.length],
+      ),
       borderWidth: 0,
       hoverOffset: 6,
     },
   ],
 }));
 
-const services = ["SSH", "HTTP", "RDP", "SMB", "FTP"];
-const barValues = reactive<number[]>([124, 96, 71, 45, 30]);
+const topServices = computed(() => analytics.serviceStats.slice(0, 5));
 
 const barData = computed<ChartData<"bar">>(() => ({
-  labels: services,
+  labels: topServices.value.map((item) => item.label),
   datasets: [
     {
       label: "Попадания",
-      data: [...barValues],
+      data: topServices.value.map((item) => item.count),
       backgroundColor: "rgba(16, 185, 129, 0.35)",
       borderColor: "#10b981",
       borderWidth: 1,
@@ -116,33 +98,14 @@ const barOptions: ChartOptions<"bar"> = {
   },
 };
 
-let timer: ReturnType<typeof setInterval> | undefined;
-
-function tick() {
-  if (document.hidden) return;
-
-  lineLabels.value.shift();
-  lineValues.value.shift();
-  lineLabels.value.push(timeLabel(0));
-  lineValues.value.push(rand(30, 150));
-
-  for (const key of Object.keys(vectors)) {
-    vectors[key] = Math.min(80, Math.max(5, (vectors[key] ?? 0) + rand(-5, 5)));
-  }
-
-  barValues.forEach((value, i) => {
-    barValues[i] = Math.min(180, Math.max(10, value + rand(-12, 12)));
-  });
-}
-
-onMounted(() => {
+onMounted(async () => {
   settings.load();
-  trapsStore.load();
 
-  if (auth.isAuthenticated) timer = setInterval(tick, 2500);
+  if (!auth.isAuthenticated) return;
+
+  await trapsStore.load();
+  await analytics.load();
 });
-
-onBeforeUnmount(() => clearInterval(timer));
 
 function hasWidget(key: string) {
   return settings.dashboard.includes(key);
@@ -154,12 +117,10 @@ const severityColor: Record<string, "neutral" | "warning" | "error"> = {
   critical: "error",
 };
 
-const criticalCount = computed(() =>
-  trapsStore.traps.reduce(
-    (sum, trap) =>
-      sum + trap.events.filter((event) => event.severity === "critical").length,
-    0,
-  ),
+const periodText = computed(
+  () =>
+    PERIODS.find((item) => item.key === analytics.period)?.label.toLowerCase() ??
+    "",
 );
 
 const dashboardKpis = computed(() => [
@@ -175,24 +136,18 @@ const dashboardKpis = computed(() => [
   },
   {
     label: "Событий captured",
-    value: trapsStore.totalEvents.toLocaleString("ru-RU"),
+    value: (analytics.overview?.total ?? 0).toLocaleString("ru-RU"),
     icon: "i-lucide-activity",
   },
   {
     label: "Критичных в журнале",
-    value: String(criticalCount.value),
+    value: String(analytics.criticalCount),
     icon: "i-lucide-shield-alert",
   },
 ]);
 
 const latestEvents = computed(() =>
-  trapsStore.traps
-    .flatMap((trap) =>
-      trap.events.map((event) => ({
-        ...event,
-        trapName: trap.name || trap.id,
-      })),
-    )
+  [...analytics.windowEvents]
     .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))
     .slice(0, 6),
 );
@@ -575,7 +530,7 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
                   Активность ловушек
                 </h2>
                 <span class="font-mono text-[11px] text-muted">
-                  live · 5 мин
+                  {{ periodText }}
                 </span>
               </div>
             </template>
@@ -615,7 +570,7 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
                   Цели по сервисам
                 </h2>
                 <span class="font-mono text-[11px] text-muted">
-                  топ-5 портов
+                  топ-5 протоколов
                 </span>
               </div>
             </template>

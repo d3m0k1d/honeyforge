@@ -2,7 +2,7 @@
 definePageMeta({ permission: "analytics:read" });
 
 import type { ChartData, ChartOptions } from "chart.js";
-import { ACTION_LABELS } from "~/utils/traps";
+import { actionLabel } from "~/utils/traps";
 import { PERIODS } from "~/stores/analytics";
 
 const GRID = "rgba(148, 163, 184, 0.12)";
@@ -13,29 +13,27 @@ const traps = useTrapsStore();
 const route = useRoute();
 
 const stats = computed(() => {
-  const events = store.sortedEvents;
+  const overview = store.overview;
 
   return [
     {
       label: "Событий в выборке",
-      value: events.length.toLocaleString("ru-RU"),
+      value: (overview?.total ?? 0).toLocaleString("ru-RU"),
       icon: "i-lucide-activity",
     },
     {
       label: "Уникальных атакующих",
-      value: String(new Set(events.map((event) => event.source)).size),
+      value: String(overview?.unique_sources ?? 0),
       icon: "i-lucide-users-round",
     },
     {
       label: "Критических",
-      value: String(
-        events.filter((event) => event.severity === "critical").length,
-      ),
+      value: String(store.criticalCount),
       icon: "i-lucide-shield-alert",
     },
     {
       label: "Ловушек затронуто",
-      value: String(new Set(events.map((event) => event.trapId)).size),
+      value: String(store.involvedTraps),
       icon: "i-lucide-radar",
     },
   ];
@@ -89,9 +87,7 @@ const serviceData = computed<ChartData<"bar">>(() => ({
 }));
 
 const actionData = computed<ChartData<"bar">>(() => ({
-  labels: store.actionStats.map(
-    (item) => ACTION_LABELS[item.label as keyof typeof ACTION_LABELS] ?? item.label,
-  ),
+  labels: store.actionStats.map((item) => actionLabel(item.label)),
   datasets: [
     {
       label: "События",
@@ -189,14 +185,18 @@ const scopeName = computed(() =>
   store.activeTrap ? store.activeTrap.name || store.activeTrap.id : null,
 );
 
-onMounted(() => {
-  traps.load();
+onMounted(async () => {
+  await traps.load();
 
   const id = route.query.trap;
 
-  if (typeof id === "string" && store.trapOptions.some((item) => item.value === id)) {
+  if (typeof id === "string" && traps.getTrap(id)) {
+    // setTrap сам перезапрашивает данные (watcher в сторе).
     store.setTrap(id);
+    return;
   }
+
+  await store.load();
 });
 </script>
 
@@ -250,6 +250,15 @@ onMounted(() => {
     </div>
 
     <AnalyticsToolbar />
+
+    <UAlert
+      v-if="store.error"
+      icon="i-lucide-circle-alert"
+      color="error"
+      variant="subtle"
+      title="Не удалось загрузить аналитику"
+      :description="store.error"
+    />
 
     <div class="grid gap-3 lg:grid-cols-3">
       <UCard class="lg:col-span-2" :ui="{ body: 'p-4', header: 'p-4 pb-0' }">
@@ -354,7 +363,7 @@ onMounted(() => {
         <h2 class="mt-1 text-sm font-semibold text-highlighted">
           События
           <span class="font-mono font-normal text-muted">
-            · {{ store.sortedEvents.length }}
+            · {{ store.journalTotal }}
           </span>
         </h2>
       </div>

@@ -1,5 +1,10 @@
 <script setup lang="ts">
 const sidebarOpen = ref(true);
+const store = useTablesStore();
+
+onMounted(() => {
+  void store.load();
+});
 </script>
 
 <template>
