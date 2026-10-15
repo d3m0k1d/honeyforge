@@ -1,3 +1,7 @@
+import asyncio
+import contextlib
+import os
+import tempfile
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import PurePosixPath
@@ -20,6 +24,7 @@ from sqlalchemy import and_, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
+from core.config import Settings
 from db.engine import get_session
 from db.models import (
     Agent,
@@ -43,6 +48,7 @@ from modules.deployments.schemas import (
     DeploymentActionRequest,
     DeploymentCreate,
     DeploymentRead,
+    QEMUImageRead,
     ResetRequest,
     SnapshotCreate,
     SnapshotRead,
@@ -51,6 +57,8 @@ from modules.deployments.schemas import (
 router = APIRouter(tags=["deployments"])
 Session: TypeAlias = Annotated[AsyncSession, Depends(get_session)]
 MAX_ARTIFACT_SIZE = 10 * 1024 * 1024
+QEMU_IMAGE_EXTENSIONS = {".qcow2", ".img", ".raw"}
+QEMU_IMAGE_CHUNK_SIZE = 1024 * 1024
 
 
 def deployment_response(deployment: Deployment) -> DeploymentRead:
@@ -211,6 +219,127 @@ async def download_deployment_artifact(artifact_id: UUID, session: Session) -> R
 
 
 @router.post(
+    "/qemu-images",
+    response_model=QEMUImageRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=requires(PermissionName.DEPLOYMENTS_MANAGE),
+)
+async def upload_qemu_image(
+    file: Annotated[UploadFile, File()],
+) -> QEMUImageRead:
+    file_name = PurePosixPath(file.filename or "").name
+    suffix = PurePosixPath(file_name).suffix.lower()
+    if (
+        not file_name
+        or file_name != (file.filename or "")
+        or file_name in {".", ".."}
+        or suffix not in QEMU_IMAGE_EXTENSIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Image name must be a local .qcow2, .img or .raw file",
+        )
+
+    image_dir = Settings.QEMU_IMAGE_DIR
+    await asyncio.to_thread(image_dir.mkdir, parents=True, exist_ok=True)
+    target = image_dir / file_name
+    if target.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Image already exists"
+        )
+
+    temporary_path: str | None = None
+    digest = sha256()
+    size = 0
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=image_dir, prefix=f".{file_name}.", delete=False
+        ) as temporary:
+            temporary_path = temporary.name
+            while chunk := await file.read(QEMU_IMAGE_CHUNK_SIZE):
+                size += len(chunk)
+                if size > Settings.QEMU_MAX_IMAGE_SIZE_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                        detail="QEMU image exceeds the configured size limit",
+                    )
+                digest.update(chunk)
+                temporary.write(chunk)
+            if size == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="QEMU image must not be empty",
+                )
+        try:
+            os.link(temporary_path, target)
+        except FileExistsError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Image already exists"
+            ) from None
+        os.unlink(temporary_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary_path)
+        await file.close()
+
+    return QEMUImageRead(
+        name=file_name, size_bytes=size, checksum_sha256=digest.hexdigest()
+    )
+
+
+@router.get(
+    "/qemu-images",
+    response_model=list[QEMUImageRead],
+    dependencies=requires(PermissionName.DEPLOYMENTS_READ),
+)
+async def list_qemu_images() -> list[QEMUImageRead]:
+    image_dir = Settings.QEMU_IMAGE_DIR
+    if not image_dir.is_dir():
+        return []
+    result: list[QEMUImageRead] = []
+    for path in sorted(image_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in QEMU_IMAGE_EXTENSIONS:
+            continue
+        digest = sha256()
+        size = 0
+        with path.open("rb") as stream:
+            while chunk := stream.read(QEMU_IMAGE_CHUNK_SIZE):
+                size += len(chunk)
+                digest.update(chunk)
+        result.append(
+            QEMUImageRead(
+                name=path.name, size_bytes=size, checksum_sha256=digest.hexdigest()
+            )
+        )
+    return result
+
+
+@router.delete(
+    "/qemu-images/{image_name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=requires(PermissionName.DEPLOYMENTS_MANAGE),
+)
+async def delete_qemu_image(image_name: str) -> Response:
+    name = PurePosixPath(image_name).name
+    if (
+        name != image_name
+        or PurePosixPath(name).suffix.lower() not in QEMU_IMAGE_EXTENSIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
+        )
+    try:
+        (Settings.QEMU_IMAGE_DIR / name).unlink()
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
+        ) from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
     "/deployments",
     response_model=DeploymentRead,
     status_code=status.HTTP_201_CREATED,
@@ -236,6 +365,9 @@ async def create_deployment(
 
     if definition["level"] == "high":
         high_config = HighConfig.model_validate(config)
+        image_path = Settings.QEMU_IMAGE_DIR / high_config.image
+        if not image_path.is_file():
+            raise HTTPException(status_code=404, detail="QEMU image not found")
         if high_config.provisioning_artifact_id is not None:
             try:
                 artifact_id = UUID(high_config.provisioning_artifact_id)

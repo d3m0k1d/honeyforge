@@ -26,7 +26,7 @@
       "properties": {
         "type": { "type": "string", "description": "Один из встроенных типов (см. --list) или \"line\"" },
         "name": { "type": "string", "description": "Имя сервиса в событиях; по умолчанию равно type" },
-        "level": { "type": "string", "enum": ["low", "medium"], "description": "Уровень ловушки; low — только баннер, medium — полная логика" },
+        "level": { "type": "string", "enum": ["low", "medium", "high"], "description": "Уровень ловушки; low — только баннер, medium — логика, high — расширенный сбор ввода" },
         "listen": { "type": "string", "examples": [":2222", "127.0.0.1:9099"], "description": "Адрес прослушивания; по умолчанию стандартный порт типа" },
         "tls_cert": { "type": "string", "description": "Сертификат для TLS-сервиса" },
         "tls_key": { "type": "string", "description": "Ключ для TLS-сервиса" },

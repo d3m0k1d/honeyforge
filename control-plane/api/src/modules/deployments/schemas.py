@@ -23,6 +23,12 @@ class ArtifactRead(BaseModel):
     created_at: datetime
 
 
+class QEMUImageRead(BaseModel):
+    name: str
+    size_bytes: int
+    checksum_sha256: str
+
+
 class DeploymentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     agent_id: str = Field(min_length=1, max_length=128)

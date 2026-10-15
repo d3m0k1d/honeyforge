@@ -1,6 +1,7 @@
 package imitor
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 	"time"
@@ -91,7 +92,7 @@ func (h *ruleHandler) Serve(s *Session) {
 					req = string(stripTelnetIAC([]byte(req)))
 				}
 				if h.framing == frameHTTP {
-					h.logHTTP(s, req)
+					h.logHTTP(s, req, httpBody(buf[:used]))
 					if _, closeSession := rs.fire(s, h.rules, req, h.baseDelay, h.jitter, false); closeSession {
 						return
 					}
@@ -144,8 +145,12 @@ func (h *bannerHandler) Serve(s *Session) {
 	}
 }
 
-func (h *ruleHandler) logHTTP(s *Session, head string) {
-	lines := strings.Split(head, "\n")
+func (h *ruleHandler) logHTTP(s *Session, head, payload string) {
+	parts := strings.SplitN(head, "\r\n\r\n", 2)
+	if len(parts) == 1 {
+		parts = strings.SplitN(head, "\n\n", 2)
+	}
+	lines := strings.Split(parts[0], "\n")
 	data := map[string]string{}
 	if len(lines) > 0 {
 		if parts := strings.Fields(strings.TrimRight(lines[0], "\r")); len(parts) >= 2 {
@@ -166,10 +171,33 @@ func (h *ruleHandler) logHTTP(s *Session, head string) {
 			data["agent"] = truncate(val, 512)
 		case "referer":
 			data["referer"] = truncate(val, 512)
+		case "content-type":
+			data["content_type"] = truncate(val, 128)
 		}
+	}
+	if payload != "" {
+		data["payload"] = truncate(payload, 4096)
 	}
 	if len(data) == 0 {
 		return
 	}
 	s.Log("http", "", data)
+}
+
+func httpBody(raw []byte) string {
+	separator := []byte("\r\n\r\n")
+	start := bytes.Index(raw, separator)
+	if start < 0 {
+		separator = []byte("\n\n")
+		start = bytes.Index(raw, separator)
+	}
+	if start < 0 {
+		return ""
+	}
+	start += len(separator)
+	length := contentLength(raw[:start-len(separator)])
+	if length <= 0 || start+length > len(raw) {
+		return ""
+	}
+	return string(raw[start : start+length])
 }

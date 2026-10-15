@@ -15,12 +15,12 @@ WORKDIR /app
 
 RUN mkdir -p /var/lib/honeypot-agent \
     && chown 65532:65532 /var/lib/honeypot-agent
-COPY --from=builder /agent /usr/local/bin/agent
+COPY --from=builder /agent /usr/local/bin/runtime-worker
 COPY configs/config.example.json ./configs/config.json
 
 USER 65532:65532
 
-ENTRYPOINT ["/usr/local/bin/agent"]
+ENTRYPOINT ["/usr/local/bin/runtime-worker"]
 
 FROM debian:bookworm-slim AS qemu-runtime
 
@@ -36,10 +36,10 @@ RUN apt-get update \
     && mkdir -p /var/lib/honeypot-agent /var/lib/honeypot-images \
     && chown -R 65532:65532 /var/lib/honeypot-agent
 
-COPY --from=builder /agent /usr/local/bin/agent
+COPY --from=builder /agent /usr/local/bin/runtime-worker
 
 USER 65532:65532
 
-ENTRYPOINT ["/usr/local/bin/agent"]
+ENTRYPOINT ["/usr/local/bin/runtime-worker"]
 
 FROM runtime AS final

@@ -35,11 +35,16 @@ func (osRunner) Run(ctx context.Context, name string, args ...string) ([]byte, e
 }
 
 type Options struct {
-	StateDir      string
-	ImageDir      string
-	QEMU          string
-	QEMUImg       string
-	VirtCustomize string
+	StateDir        string
+	ImageDir        string
+	QEMU            string
+	QEMUImg         string
+	VirtCustomize   string
+	AgentBinary     string
+	GatewayURL      string
+	EnrollmentURL   string
+	EnrollmentToken string
+	BootstrapCA     string
 }
 
 type Manager struct {
@@ -200,6 +205,9 @@ func (m *Manager) deploy(ctx context.Context, command orchestrator.Command, p pa
 			return orchestrator.Result{}, err
 		}
 	}
+	if err := m.installRuntimeWorker(ctx, disk); err != nil {
+		return orchestrator.Result{}, fmt.Errorf("install runtime worker: %w", err)
+	}
 	if p.Config.ProvisioningArtifactID != "" {
 		artifact, err := load(ctx, command.ID, p.Config.ProvisioningArtifactID)
 		if err != nil {
@@ -237,6 +245,75 @@ func (m *Manager) deploy(ctx context.Context, command orchestrator.Command, p pa
 		return orchestrator.Result{}, err
 	}
 	return orchestrator.Result{Data: map[string]any{"disk": disk}}, nil
+}
+
+func (m *Manager) installRuntimeWorker(ctx context.Context, disk string) error {
+	if m.options.AgentBinary == "" {
+		return nil
+	}
+	if m.options.GatewayURL == "" || m.options.EnrollmentURL == "" || m.options.EnrollmentToken == "" || m.options.BootstrapCA == "" {
+		return errors.New("gateway, enrollment, token and bootstrap CA are required")
+	}
+	for _, value := range []string{m.options.GatewayURL, m.options.EnrollmentURL, m.options.EnrollmentToken} {
+		if strings.ContainsAny(value, "\r\n") {
+			return errors.New("runtime worker bootstrap values must not contain newlines")
+		}
+	}
+	for _, path := range []string{m.options.AgentBinary, m.options.BootstrapCA} {
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("bootstrap file %q is unavailable", path)
+		}
+	}
+	dir := filepath.Dir(disk)
+	envPath := filepath.Join(dir, "runtime-worker.env")
+	unitPath := filepath.Join(dir, "runtime-worker.service")
+	env := "HONEYPOT_GATEWAY_URL=" + m.options.GatewayURL + "\n" +
+		"HONEYPOT_ENROLLMENT_URL=" + m.options.EnrollmentURL + "\n" +
+		"HONEYPOT_ENROLLMENT_TOKEN=" + m.options.EnrollmentToken + "\n" +
+		"HONEYPOT_BOOTSTRAP_CA=/etc/runtime-worker/ca.crt\n" +
+		"HONEYPOT_SERIAL_LOG=/dev/ttyS0\n" +
+		"HONEYPOT_SERIAL_ONLY=true\n"
+	unit := `[Unit]
+Description=Runtime worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=runtime-worker
+EnvironmentFile=/etc/runtime-worker/runtime-worker.env
+ExecStart=/usr/local/libexec/runtime-worker
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+`
+	if err := os.WriteFile(envPath, []byte(env), 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(envPath)
+	if err := os.WriteFile(unitPath, []byte(unit), 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(unitPath)
+	args := []string{
+		"-a", disk,
+		"--mkdir", "/etc/runtime-worker",
+		"--upload", m.options.AgentBinary + ":/usr/local/libexec/runtime-worker",
+		"--upload", m.options.BootstrapCA + ":/etc/runtime-worker/ca.crt",
+		"--upload", envPath + ":/etc/runtime-worker/runtime-worker.env",
+		"--upload", unitPath + ":/etc/systemd/system/runtime-worker.service",
+		"--run-command", "chmod 0755 /usr/local/libexec/runtime-worker",
+		"--run-command", "systemctl enable runtime-worker.service",
+	}
+	return m.run(ctx, m.options.VirtCustomize, args...)
 }
 
 func (m *Manager) prepareCloudInit(ctx context.Context, id string, p payload) error {

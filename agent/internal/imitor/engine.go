@@ -2,7 +2,9 @@ package imitor
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,11 +57,20 @@ type Session struct {
 	Service string
 	Level   string
 	Src     string
+	ID      string
 	logger  *Logger
 }
 
 func newSession(conn net.Conn, service, level string, logger *Logger) *Session {
-	return &Session{conn: conn, Service: service, Level: level, Src: conn.RemoteAddr().String(), logger: logger}
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		// The connection remains usable; the event still has a stable process-local ID.
+		copy(raw[:], []byte(time.Now().UTC().Format("20060102150405.000000000")))
+	}
+	return &Session{
+		conn: conn, Service: service, Level: level, Src: conn.RemoteAddr().String(),
+		ID: hex.EncodeToString(raw[:]), logger: logger,
+	}
 }
 
 func (s *Session) Send(b []byte) error {
@@ -88,7 +99,19 @@ func (s *Session) Sleep(base, jitter time.Duration) {
 }
 
 func (s *Session) Log(event, rule string, data map[string]string) {
-	s.logger.Log(Event{Service: s.Service, Level: s.Level, Src: s.Src, Event: event, Rule: rule, Data: data})
+	fields := make(map[string]string, len(data)+4)
+	for key, value := range data {
+		fields[key] = value
+	}
+	fields["session_id"] = s.ID
+	fields["protocol"] = s.Service
+	if sourcePort := portOf(s.conn.RemoteAddr()); sourcePort != "" {
+		fields["source_port"] = sourcePort
+	}
+	if destinationPort := portOf(s.conn.LocalAddr()); destinationPort != "" {
+		fields["destination_port"] = destinationPort
+	}
+	s.logger.Log(Event{Service: s.Service, Level: s.Level, Src: s.Src, Event: event, Rule: rule, Data: fields})
 }
 
 func (s *Session) SetReadDeadline(d time.Duration) {

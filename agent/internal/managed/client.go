@@ -28,6 +28,9 @@ type Options struct {
 	StateDir        string
 	PollInterval    time.Duration
 	Executor        orchestrator.Executor
+	SerialLog       string
+	SerialOnly      bool
+	SerialBridge    bool
 }
 
 func secureURL(raw string) error {

@@ -83,12 +83,14 @@ const mysqlErrAccessDenied = 1045
 type mysqlHandler struct {
 	opts    handlerOpts
 	version string
+	backend *sqliteBackend
 }
 
-func newMySQLHandler(opts handlerOpts, params map[string]string) *mysqlHandler {
+func newMySQLHandler(opts handlerOpts, params map[string]string, backend *sqliteBackend) *mysqlHandler {
 	return &mysqlHandler{
 		opts:    opts,
 		version: param(params, "server_version", "8.0.35"),
+		backend: backend,
 	}
 }
 
@@ -116,18 +118,95 @@ func (h *mysqlHandler) Serve(s *Session) {
 
 		// Первый пакет клиента — ответ на приветствие, из него достаём логин.
 		user := ""
-		if first {
+		wasFirst := first
+		if wasFirst {
 			user = mysqlUsername(payload)
 			s.Log("rule", "handshake_response", map[string]string{"username": truncate(user, 512)})
 			first = false
 		}
 
-		s.Sleep(h.opts.baseDelay, h.opts.jitter)
-		msg := fmt.Sprintf("Access denied for user '%s'@'%s' (using password: YES)", user, hostOnly(s.Src))
-		if err := s.Send(mysqlErrPacket(seq+1, mysqlErrAccessDenied, "28000", msg)); err != nil {
-			return
+		if wasFirst {
+			if err := s.Send(mysqlOKPacket(seq+1, 0)); err != nil {
+				return
+			}
+			continue
+		}
+		if len(payload) == 0 {
+			continue
+		}
+		if payload[0] != 0x03 { // COM_QUERY
+			_ = s.Send(mysqlErrPacket(seq+1, 1064, "42000", "unsupported command"))
+			continue
+		}
+		query := strings.TrimSpace(string(payload[1:]))
+		s.Log("query", "sql", map[string]string{"username": truncate(user, 512), "query": truncate(query, 4096)})
+		if err := h.sendQuery(s, seq+1, query); err != nil {
+			_ = s.Send(mysqlErrPacket(seq+1, 1105, "HY000", truncate(err.Error(), 512)))
 		}
 	}
+}
+
+func (h *mysqlHandler) sendQuery(s *Session, seq byte, query string) error {
+	if strings.HasPrefix(strings.ToUpper(query), "SELECT") || strings.HasPrefix(strings.ToUpper(query), "PRAGMA") || strings.HasPrefix(strings.ToUpper(query), "WITH") {
+		columns, rows, err := h.backend.query(query)
+		if err != nil {
+			return err
+		}
+		if err := s.Send(frameMySQLPacket(seq, mysqlLenEncInt(len(columns)))); err != nil {
+			return err
+		}
+		for i, column := range columns {
+			if err := s.Send(frameMySQLPacket(seq+byte(i+1), mysqlColumnDefinition(column))); err != nil {
+				return err
+			}
+		}
+		if err := s.Send(frameMySQLPacket(seq+byte(len(columns)+1), []byte{0xfe, 0, 0, 2, 0})); err != nil {
+			return err
+		}
+		for i, row := range rows {
+			if err := s.Send(frameMySQLPacket(seq+byte(len(columns)+2+i), mysqlRow(row))); err != nil {
+				return err
+			}
+		}
+		return s.Send(frameMySQLPacket(seq+byte(len(columns)+2+len(rows)), []byte{0xfe, 0, 0, 2, 0}))
+	}
+	count, err := h.backend.exec(query)
+	if err != nil {
+		return err
+	}
+	return s.Send(mysqlOKPacket(seq, count))
+}
+
+func mysqlOKPacket(seq byte, affected int64) []byte {
+	return frameMySQLPacket(seq, []byte{0x00, byte(affected), 0, 2, 0})
+}
+func mysqlLenEncInt(value int) []byte {
+	if value < 251 {
+		return []byte{byte(value)}
+	}
+	return []byte{0xfc, byte(value), byte(value >> 8)}
+}
+func mysqlLenEncString(value string) []byte {
+	data := []byte(value)
+	return append(mysqlLenEncInt(len(data)), data...)
+}
+
+func mysqlColumnDefinition(name string) []byte {
+	body := []byte{}
+	for _, value := range []string{"def", "", "", "", name, name} {
+		body = append(body, mysqlLenEncString(value)...)
+	}
+	body = append(body, 0x0c, 0x21, 0, 0, 0, 0xfd, 0, 0, 0, 0)
+	return body
+}
+func mysqlRow(row []any) []byte {
+	out := []byte{}
+	for _, value := range row {
+		text := fmt.Sprint(value)
+		out = append(out, byte(len(text)))
+		out = append(out, text...)
+	}
+	return out
 }
 
 // greeting собирает пакет приветствия сервера (протокол 10).
@@ -223,11 +302,16 @@ const (
 // postgresHandler эмулирует PostgreSQL: читает стартовый пакет, запрашивает пароль
 // в открытом виде и на любой вход отвечает FATAL "password authentication failed".
 type postgresHandler struct {
-	opts handlerOpts
+	opts    handlerOpts
+	backend *sqliteBackend
 }
 
-func newPostgresHandler(opts handlerOpts, _ map[string]string) *postgresHandler {
-	return &postgresHandler{opts: opts}
+func newPostgresHandler(opts handlerOpts, _ map[string]string, backends ...*sqliteBackend) *postgresHandler {
+	var backend *sqliteBackend
+	if len(backends) > 0 {
+		backend = backends[0]
+	}
+	return &postgresHandler{opts: opts, backend: backend}
 }
 
 func (h *postgresHandler) Serve(s *Session) {
@@ -275,8 +359,17 @@ func (h *postgresHandler) Serve(s *Session) {
 	}
 	s.Log("rule", "startup", meta)
 
-	if err := s.Send(pgAuthCleartext()); err != nil {
+	if h.backend == nil {
+		if err := s.Send(pgAuthCleartext()); err != nil {
+			return
+		}
+	} else if err := s.Send(pgAuthOK()); err != nil {
 		return
+	}
+	if h.backend != nil {
+		if err := s.Send(pgReadyForQuery()); err != nil {
+			return
+		}
 	}
 
 	for {
@@ -285,16 +378,25 @@ func (h *postgresHandler) Serve(s *Session) {
 			return
 		}
 		switch typ {
-		case 'p': // PasswordMessage
-			password := postgresCString(msg)
-			s.Sleep(h.opts.baseDelay, h.opts.jitter)
-			s.Log("auth", "password", map[string]string{
-				"username": meta["username"],
-				"password": truncate(password, 512),
-			})
-			_ = s.Send(pgErrorResponse("FATAL", pgErrInvalidPassword,
-				fmt.Sprintf("password authentication failed for user \"%s\"", meta["username"])))
-			return
+		case 'p': // PasswordMessage, accepted for compatibility with clients.
+			s.Log("auth", "password", map[string]string{"username": meta["username"], "password": truncate(postgresCString(msg), 512)})
+			if h.backend == nil {
+				_ = s.Send(pgErrorResponse("FATAL", pgErrInvalidPassword, fmt.Sprintf("password authentication failed for user \"%s\"", meta["username"])))
+				return
+			}
+			_ = s.Send(pgReadyForQuery())
+			continue
+		case 'Q':
+			if h.backend == nil {
+				return
+			}
+			query := strings.TrimRight(postgresCString(msg), "\x00")
+			s.Log("query", "sql", map[string]string{"username": meta["username"], "query": truncate(query, 4096)})
+			if err := h.sendPostgresQuery(s, query); err != nil {
+				_ = s.Send(pgErrorResponse("ERROR", "HY000", err.Error()))
+			} else {
+				_ = s.Send(pgReadyForQuery())
+			}
 		case 'X': // Terminate
 			return
 		default:
@@ -303,6 +405,30 @@ func (h *postgresHandler) Serve(s *Session) {
 			}
 		}
 	}
+}
+
+func (h *postgresHandler) sendPostgresQuery(s *Session, query string) error {
+	upper := strings.ToUpper(strings.TrimSpace(query))
+	if strings.HasPrefix(upper, "SELECT") || strings.HasPrefix(upper, "PRAGMA") || strings.HasPrefix(upper, "WITH") {
+		columns, rows, err := h.backend.query(query)
+		if err != nil {
+			return err
+		}
+		if err := s.Send(pgRowDescription(columns)); err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if err := s.Send(pgDataRow(row)); err != nil {
+				return err
+			}
+		}
+		return s.Send(pgCommandComplete("SELECT"))
+	}
+	_, err := h.backend.exec(query)
+	if err != nil {
+		return err
+	}
+	return s.Send(pgCommandComplete("OK"))
 }
 
 // readPostgresStartup читает стартовый пакет: 4 байта длины и код (версию протокола или служебный запрос).
@@ -379,6 +505,56 @@ func pgAuthCleartext() []byte {
 	binary.BigEndian.PutUint32(b[1:5], 8)
 	binary.BigEndian.PutUint32(b[5:9], pgAuthenticationCleartextPassword)
 	return b
+}
+
+func pgAuthOK() []byte {
+	b := make([]byte, 9)
+	b[0] = 'R'
+	binary.BigEndian.PutUint32(b[1:5], 8)
+	return b
+}
+func pgReadyForQuery() []byte { return []byte{'Z', 0, 0, 0, 5, 'I'} }
+func pgCommandComplete(tag string) []byte {
+	body := append([]byte(tag), 0)
+	out := make([]byte, 5+len(body))
+	out[0] = 'C'
+	binary.BigEndian.PutUint32(out[1:5], uint32(4+len(body)))
+	copy(out[5:], body)
+	return out
+}
+func pgRowDescription(names []string) []byte {
+	var body bytes.Buffer
+	_ = binary.Write(&body, binary.BigEndian, uint16(len(names)))
+	for _, name := range names {
+		body.WriteString(name)
+		body.WriteByte(0)
+		_ = binary.Write(&body, binary.BigEndian, uint32(0))  // table OID
+		_ = binary.Write(&body, binary.BigEndian, uint16(0))  // attribute number
+		_ = binary.Write(&body, binary.BigEndian, uint32(25)) // text OID
+		_ = binary.Write(&body, binary.BigEndian, int16(-1))  // type size
+		_ = binary.Write(&body, binary.BigEndian, int32(-1))  // type modifier
+		_ = binary.Write(&body, binary.BigEndian, int16(0))   // text format
+	}
+	out := make([]byte, 5+body.Len())
+	out[0] = 'T'
+	binary.BigEndian.PutUint32(out[1:5], uint32(4+body.Len()))
+	copy(out[5:], body.Bytes())
+	return out
+}
+func pgDataRow(row []any) []byte {
+	body := []byte{byte(len(row) >> 8), byte(len(row))}
+	for _, value := range row {
+		text := []byte(fmt.Sprint(value))
+		var n [4]byte
+		binary.BigEndian.PutUint32(n[:], uint32(len(text)))
+		body = append(body, n[:]...)
+		body = append(body, text...)
+	}
+	out := make([]byte, 5+len(body))
+	out[0] = 'D'
+	binary.BigEndian.PutUint32(out[1:5], uint32(4+len(body)))
+	copy(out[5:], body)
+	return out
 }
 
 // pgErrorResponse собирает ErrorResponse с полями severity, SQLSTATE и сообщением.

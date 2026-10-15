@@ -124,6 +124,47 @@ func TestManagerDeployAnsibleInsideGuest(t *testing.T) {
 	}
 }
 
+func TestManagerInstallsRuntimeWorkerForTelemetry(t *testing.T) {
+	manager, runner := newTestManager(t)
+	root := t.TempDir()
+	binary := filepath.Join(root, "runtime-worker")
+	ca := filepath.Join(root, "ca.crt")
+	if err := os.WriteFile(binary, []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ca, []byte("ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager.options.AgentBinary = binary
+	manager.options.BootstrapCA = ca
+	manager.options.GatewayURL = "https://10.0.2.2:8443"
+	manager.options.EnrollmentURL = "https://10.0.2.2:8444/agents/enroll"
+	manager.options.EnrollmentToken = "enrollment-token"
+	if _, err := manager.Execute(t.Context(), deployCommand(t, "shell"), func(context.Context, string, string) ([]byte, error) {
+		return []byte("#!/bin/sh\n"), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var args string
+	for _, call := range runner.calls {
+		candidate := strings.Join(call.args, " ")
+		if call.name == "virt-customize" && strings.Contains(candidate, "/etc/systemd/system/runtime-worker.service") {
+			args = candidate
+		}
+	}
+	for _, expected := range []string{
+		"/usr/local/libexec/runtime-worker",
+		"/etc/runtime-worker/ca.crt",
+		"runtime-worker.env",
+		"/etc/systemd/system/runtime-worker.service",
+		"systemctl enable runtime-worker.service",
+	} {
+		if !strings.Contains(args, expected) {
+			t.Fatalf("runtime worker bootstrap missing %q: %s", expected, args)
+		}
+	}
+}
+
 func TestManagerAddsValidatedPortForwards(t *testing.T) {
 	manager, runner := newTestManager(t)
 	command := deployCommand(t, "shell")

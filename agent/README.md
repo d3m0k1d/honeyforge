@@ -25,6 +25,7 @@ export HONEYPOT_BOOTSTRAP_CA=/etc/honeypot-agent/ca.crt
 export HONEYPOT_STATE_DIR=/var/lib/honeypot-agent
 export HONEYPOT_POLL_INTERVAL=5s
 export HONEYPOT_ENROLLMENT_TOKEN='your-one-time-token'
+export HONEYPOT_WORKER_NAME=runtime-worker
 ./agent
 ```
 
@@ -32,6 +33,8 @@ Run as an account that can write the state directory and bind the assigned
 decoy ports. `HONEYPOT_GATEWAY_URL` enables managed mode; runtime calls use
 `/heartbeat`, `/config`, and `/events` on port 8443 (proxied to the API's
 `/agents/...` routes).
+`HONEYPOT_WORKER_NAME` changes the Linux process label; it defaults to
+`runtime-worker` and does not change the command line or install persistence.
 Enrollment uses HTTPS port 8444 without a client certificate, authenticated by
 the single-use token. Poll intervals must be greater than zero and at most 60s.
 The equivalent flags are `-gateway-url`, `-enrollment-url`, `-bootstrap-ca`,

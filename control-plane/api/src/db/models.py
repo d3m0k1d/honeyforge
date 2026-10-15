@@ -353,6 +353,30 @@ class Alert(Base):
     agent: Mapped[Agent] = relationship()
 
 
+class DatabaseWorkspace(Base):
+    """Portable schema/data model used by the database designer API.
+
+    The agent owns the runtime SQLite file; the control plane stores the
+    designer definition so it can be assigned to more than one agent.
+    """
+
+    __tablename__ = "database_workspaces"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    tables: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class DeploymentArtifact(Base):
     __tablename__ = "deployment_artifacts"
 

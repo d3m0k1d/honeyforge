@@ -67,7 +67,11 @@ class CloudInitConfig(BaseModel):
 class HighConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    image: str = Field(min_length=1, max_length=255)
+    image: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$",
+    )
     vcpus: int = Field(default=2, ge=1, le=32)
     memory_mb: int = Field(default=2048, ge=256, le=65_536)
     disk_gb: int = Field(default=20, ge=1, le=2048)

@@ -10,9 +10,11 @@ from db.engine import engine
 from db.init import init_db
 from modules.agents.router import router as agents_router
 from modules.alerts.router import router as alerts_router
+from modules.analytics.router import router as analytics_router
 from modules.audit.router import router as audit_router
 from modules.auth.middleware import AuthenticationMiddleware
 from modules.auth.router import router as auth_router
+from modules.database.router import router as databases_router
 from modules.deployments.router import router as deployments_router
 from modules.events.router import router as events_router
 from modules.honeytokens.router import router as honeytokens_router
@@ -46,6 +48,8 @@ app.include_router(events_router)
 app.include_router(audit_router)
 app.include_router(alerts_router)
 app.include_router(telemetry_router)
+app.include_router(databases_router)
+app.include_router(analytics_router)
 
 
 @app.get("/health")

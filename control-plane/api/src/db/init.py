@@ -25,6 +25,9 @@ ROLE_PERMISSIONS = {
         PermissionName.ARTIFACTS_READ,
         PermissionName.ALERTS_READ,
         PermissionName.ALERTS_MANAGE,
+        PermissionName.DATABASES_READ,
+        PermissionName.DATABASES_MANAGE,
+        PermissionName.ANALYTICS_READ,
     },
     RoleName.VIEWER: {
         PermissionName.HONEYPOTS_READ,
@@ -36,6 +39,8 @@ ROLE_PERMISSIONS = {
         PermissionName.SESSIONS_READ,
         PermissionName.ARTIFACTS_READ,
         PermissionName.ALERTS_READ,
+        PermissionName.DATABASES_READ,
+        PermissionName.ANALYTICS_READ,
     },
 }
 

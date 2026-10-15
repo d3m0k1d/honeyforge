@@ -25,6 +25,9 @@ class PermissionName(StrEnum):
     AUDIT_READ = "audit:read"
     ALERTS_READ = "alerts:read"
     ALERTS_MANAGE = "alerts:manage"
+    DATABASES_READ = "databases:read"
+    DATABASES_MANAGE = "databases:manage"
+    ANALYTICS_READ = "analytics:read"
 
 
 class RoleName(StrEnum):
@@ -74,3 +77,18 @@ class UserRolesUpdate(BaseModel):
 
 class UserStatusUpdate(BaseModel):
     is_active: bool
+
+
+class UserProfileUpdate(BaseModel):
+    email: EmailStr
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+
+
+class AdminPasswordReset(BaseModel):
+    password: str = Field(min_length=12, max_length=128)
+
+
+class PermissionRead(BaseModel):
+    name: PermissionName
+    group: str

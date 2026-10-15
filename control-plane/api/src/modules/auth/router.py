@@ -10,12 +10,15 @@ from db.engine import get_session
 from db.models import Role, User
 from modules.auth.dependencies import CurrentUser, requires
 from modules.auth.schemas import (
+    AdminPasswordReset,
     LoginRequest,
     PermissionName,
+    PermissionRead,
     RoleName,
     RoleRead,
     TokenResponse,
     UserCreate,
+    UserProfileUpdate,
     UserRead,
     UserRolesUpdate,
     UserStatusUpdate,
@@ -141,6 +144,58 @@ async def list_users(session: Session) -> list[UserRead]:
     return [user_response(user) for user in users]
 
 
+@router.get(
+    "/users/{user_id}",
+    response_model=UserRead,
+    dependencies=requires(PermissionName.USERS_READ),
+)
+async def get_user(user_id: int, session: Session) -> UserRead:
+    user = await load_user(session, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    return user_response(user)
+
+
+@router.patch(
+    "/users/{user_id}",
+    response_model=UserRead,
+    dependencies=requires(PermissionName.USERS_MANAGE),
+)
+async def update_user_profile(
+    user_id: int, payload: UserProfileUpdate, session: Session
+) -> UserRead:
+    user = await load_user(session, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    user.email = str(payload.email).lower()
+    user.first_name = payload.first_name
+    user.last_name = payload.last_name
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(409, "A user with this email already exists") from None
+    updated = await load_user(session, user.id)
+    if updated is None:
+        raise RuntimeError("Updated user could not be loaded")
+    return user_response(updated)
+
+
+@router.put(
+    "/users/{user_id}/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=requires(PermissionName.USERS_MANAGE),
+)
+async def reset_user_password(
+    user_id: int, payload: AdminPasswordReset, session: Session
+) -> None:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    user.hashed_password = hash_password(payload.password)
+    await session.commit()
+
+
 @router.put(
     "/users/{user_id}/status",
     response_model=UserRead,
@@ -165,6 +220,23 @@ async def update_user_status(
     return user_response(updated)
 
 
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=requires(PermissionName.USERS_MANAGE),
+)
+async def deactivate_user(
+    user_id: int, current_user: CurrentUser, session: Session
+) -> None:
+    if user_id == current_user.id:
+        raise HTTPException(409, "Users cannot deactivate themselves")
+    user = await load_user(session, user_id)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    user.is_active = False
+    await session.commit()
+
+
 @router.get(
     "/roles",
     response_model=list[RoleRead],
@@ -185,6 +257,19 @@ async def list_roles(
         )
         for role in roles
     ]
+
+
+@router.get(
+    "/permissions",
+    response_model=list[PermissionRead],
+    dependencies=requires(PermissionName.ROLES_READ),
+)
+async def list_permissions() -> list[PermissionRead]:
+    result = []
+    for permission in PermissionName:
+        group = permission.value.split(":", 1)[0]
+        result.append(PermissionRead(name=permission, group=group))
+    return result
 
 
 @router.put(

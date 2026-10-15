@@ -11,7 +11,7 @@ import (
 type ServiceConfig struct {
 	Type string `json:"type"`
 	Name string `json:"name,omitempty"`
-	// Level — "low" или "medium"; по умолчанию берётся из типа сервиса.
+	// Level — "low", "medium" или "high"; по умолчанию берётся из типа сервиса.
 	Level string `json:"level,omitempty"`
 	// Listen по умолчанию берётся из стандартного порта типа.
 	Listen  string `json:"listen,omitempty"`
@@ -112,7 +112,11 @@ var builtins = map[string]serviceSpec{
 
 	// Бинарный протокол с собственным кодеком.
 	"mysql": {port: ":3306", level: "medium", build: func(cfg ServiceConfig, o handlerOpts) (Handler, error) {
-		return newMySQLHandler(o, cfg.Params), nil
+		backend, err := newSQLiteBackend(param(cfg.Params, "sqlite_path", "honeypot.db"))
+		if err != nil {
+			return nil, err
+		}
+		return newMySQLHandler(o, cfg.Params, backend), nil
 	}},
 
 	// PostgreSQL: свой бинарный протокол; на low — только баннер из профиля.
@@ -128,7 +132,11 @@ func postgresSpec() serviceSpec {
 		level: "medium",
 		prof:  postgresProfile,
 		build: func(cfg ServiceConfig, o handlerOpts) (Handler, error) {
-			return newPostgresHandler(o, cfg.Params), nil
+			backend, err := newSQLiteBackend(param(cfg.Params, "sqlite_path", "honeypot.db"))
+			if err != nil {
+				return nil, err
+			}
+			return newPostgresHandler(o, cfg.Params, backend), nil
 		},
 	}
 }
@@ -166,11 +174,16 @@ func NewService(cfg ServiceConfig, logger *Logger) (*Service, error) {
 			level = "medium"
 		}
 	}
-	if level != "low" && level != "medium" {
-		return nil, fmt.Errorf("invalid level %q (want low or medium)", cfg.Level)
+	if level != "low" && level != "medium" && level != "high" {
+		return nil, fmt.Errorf("invalid level %q (want low, medium or high)", cfg.Level)
 	}
 
 	opts := optsFrom(cfg)
+	if level == "high" {
+		// High interaction is the evidence-preserving mode: generic input is
+		// retained even when a profile omitted logging preferences.
+		opts.logInput = true
+	}
 	var handler Handler
 	if level == "low" {
 		// Низкий уровень: только баннер, без логики и захвата учётных данных.

@@ -44,3 +44,11 @@ class Settings:
 
     MTLS_DIR = Path(getenv("MTLS_DIR", "/var/lib/honeypotforge/mtls"))
     AGENT_GATEWAY_TOKEN = getenv("AGENT_GATEWAY_TOKEN")
+    GEO_LOOKUP_ENABLED = getenv("GEO_LOOKUP_ENABLED", "true").lower() == "true"
+    GEO_LOOKUP_URL = getenv("GEO_LOOKUP_URL", "https://ipapi.co/{ip}/json/")
+    GEO_LOOKUP_TIMEOUT_SECONDS = float(getenv("GEO_LOOKUP_TIMEOUT_SECONDS", "2"))
+
+    QEMU_IMAGE_DIR = Path(getenv("QEMU_IMAGE_DIR", "/var/lib/honeypot-images"))
+    QEMU_MAX_IMAGE_SIZE_BYTES = int(
+        getenv("QEMU_MAX_IMAGE_SIZE_BYTES", str(20 * 1024 * 1024 * 1024))
+    )

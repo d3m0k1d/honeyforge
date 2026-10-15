@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -139,7 +140,7 @@ func (s *supervisor) apply(ctx context.Context, cfg *config.Config, services map
 
 func report(err error) {
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "managed agent:", err)
+		fmt.Fprintln(os.Stderr, "runtime worker:", err)
 	}
 }
 
@@ -167,8 +168,25 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	defer client.CloseIdleConnections()
-	s := &supervisor{logger: imitor.NewLogger(spool), active: make(map[string]running), errors: make(chan error, 1)}
+	var logOutput io.Writer = spool
+	var serial *os.File
+	if o.SerialLog != "" {
+		serial, err = os.OpenFile(o.SerialLog, os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return fmt.Errorf("open serial telemetry: %w", err)
+		}
+		defer serial.Close()
+		if o.SerialOnly {
+			logOutput = serial
+		} else {
+			logOutput = io.MultiWriter(spool, serial)
+		}
+	}
+	s := &supervisor{logger: imitor.NewLogger(logOutput), active: make(map[string]running), errors: make(chan error, 1)}
 	defer s.stop()
+	if o.SerialBridge {
+		go tailSerialTelemetry(ctx, filepath.Join(o.StateDir, "qemu"), spool)
+	}
 	cache := filepath.Join(o.StateDir, "config.json")
 	if b, err := readLimited(cache, 4<<20); err == nil {
 		var cfg config.Config

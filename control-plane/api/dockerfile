@@ -25,9 +25,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
 WORKDIR /app
 
 RUN addgroup --system api \
-    && adduser --system --ingroup api api \
-    && mkdir -p /var/lib/honeypotforge/mtls \
-    && chown -R api:api /var/lib/honeypotforge
+    && adduser --system --uid 65532 --ingroup api api \
+    && mkdir -p /var/lib/honeypotforge/mtls /var/lib/honeypot-images \
+    && chown -R api:api /var/lib/honeypotforge /var/lib/honeypot-images
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --chown=api:api src ./src

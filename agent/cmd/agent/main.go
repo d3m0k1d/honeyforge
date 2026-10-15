@@ -23,12 +23,14 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "honeypot agent:", err)
+		fmt.Fprintln(os.Stderr, "runtime worker:", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
+	workerName := envOr("HONEYPOT_WORKER_NAME", envOr("HONEYPOT_PROCESS_NAME", "runtime-worker"))
+	setProcessName(workerName)
 	source := flag.String("config", envOr("HONEYPOT_CONFIG", "configs/config.json"), "path or URL of the JSON configuration")
 	token := flag.String("token", envOr("HONEYPOT_TOKEN", ""), "Bearer token for fetching config from the API")
 	list := flag.Bool("list", false, "print the built-in service types and exit")
@@ -56,9 +58,18 @@ func run() error {
 		defer stop()
 		var executor orchestrator.Executor
 		if *qemuImages != "" {
+			agentBinary, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("resolve runtime worker binary: %w", err)
+			}
 			manager, err := qemu.New(qemu.Options{
-				StateDir: filepath.Join(*stateDir, "qemu"),
-				ImageDir: *qemuImages,
+				StateDir:        filepath.Join(*stateDir, "qemu"),
+				ImageDir:        *qemuImages,
+				AgentBinary:     agentBinary,
+				GatewayURL:      envOr("HONEYPOT_QEMU_GATEWAY_URL", "https://10.0.2.2:8443"),
+				EnrollmentURL:   envOr("HONEYPOT_QEMU_ENROLLMENT_URL", "https://10.0.2.2:8444/agents/enroll"),
+				EnrollmentToken: *enrollmentToken,
+				BootstrapCA:     *bootstrapCA,
 			})
 			if err != nil {
 				return err
@@ -69,6 +80,9 @@ func run() error {
 			GatewayURL: *gateway, EnrollmentURL: *enrollment,
 			EnrollmentToken: *enrollmentToken, BootstrapCA: *bootstrapCA,
 			StateDir: *stateDir, PollInterval: interval, Executor: executor,
+			SerialLog:    envOr("HONEYPOT_SERIAL_LOG", ""),
+			SerialOnly:   envOr("HONEYPOT_SERIAL_ONLY", "false") == "true",
+			SerialBridge: executor != nil,
 		})
 	}
 

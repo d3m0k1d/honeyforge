@@ -51,12 +51,14 @@ services:
       CORS_ORIGIN_REGEX: ${CORS_ORIGIN_REGEX:-}
       MTLS_DIR: /var/lib/honeypotforge/mtls
       SERVER_COMMON_NAME: ${SERVER_COMMON_NAME:-agent-gateway}
-      SERVER_SAN: ${SERVER_SAN:-DNS:agent-gateway,DNS:api,DNS:localhost,IP:127.0.0.1}
+      SERVER_SAN: ${SERVER_SAN:-DNS:agent-gateway,DNS:api,DNS:localhost,IP:127.0.0.1,IP:10.0.2.2}
       AGENT_GATEWAY_TOKEN: ${AGENT_GATEWAY_TOKEN:?AGENT_GATEWAY_TOKEN must contain at least 32 characters}
+      QEMU_IMAGE_DIR: /var/lib/honeypot-images
     ports:
       - "${API_BIND:-0.0.0.0}:${API_PORT:-8000}:8000"
     volumes:
       - mtls_data:/var/lib/honeypotforge/mtls
+      - qemu_images:/var/lib/honeypot-images
     depends_on:
       postgres:
         condition: service_healthy
@@ -92,15 +94,18 @@ services:
     network_mode: host
     environment:
       HONEYPOT_GATEWAY_URL: https://localhost:${AGENT_MTLS_PORT:-8443}
+      HONEYPOT_WORKER_NAME: ${HONEYPOT_WORKER_NAME:-runtime-worker}
       HONEYPOT_ENROLLMENT_URL: https://localhost:${CONTROL_HTTPS_PORT:-8444}/agents/enroll
       HONEYPOT_ENROLLMENT_TOKEN: ${HONEYPOT_ENROLLMENT_TOKEN:-}
       HONEYPOT_BOOTSTRAP_CA: /etc/agent/ca.crt
       HONEYPOT_POLL_INTERVAL: ${HONEYPOT_POLL_INTERVAL:-5s}
       HONEYPOT_QEMU_IMAGE_DIR: /var/lib/honeypot-images
+      HONEYPOT_QEMU_GATEWAY_URL: ${HONEYPOT_QEMU_GATEWAY_URL:-https://10.0.2.2:8443}
+      HONEYPOT_QEMU_ENROLLMENT_URL: ${HONEYPOT_QEMU_ENROLLMENT_URL:-https://10.0.2.2:8444/agents/enroll}
     volumes:
       - qemu_agent_state:/var/lib/honeypot-agent
       - ${AGENT_BOOTSTRAP_CA:-./bootstrap-ca.crt}:/etc/agent/ca.crt:ro
-      - ${QEMU_IMAGE_DIR:-./qemu-images}:/var/lib/honeypot-images:ro
+      - qemu_images:/var/lib/honeypot-images:ro
     depends_on:
       agent-gateway:
         condition: service_healthy
@@ -108,5 +113,6 @@ services:
 
 volumes:
   postgres_data:
+  qemu_images:
   mtls_data:
   qemu_agent_state:

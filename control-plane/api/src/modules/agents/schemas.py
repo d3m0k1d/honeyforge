@@ -146,8 +146,8 @@ class AgentService(ConfigObject):
     def structural_fields(self) -> "AgentService":
         if not self.type:
             raise ValueError("service type is required")
-        if self.level not in ("", "low", "medium"):
-            raise ValueError("level must be low or medium")
+        if self.level not in ("", "low", "medium", "high"):
+            raise ValueError("level must be low, medium or high")
         if bool(self.tls_cert) != bool(self.tls_key):
             raise ValueError("tls_cert and tls_key must be set together")
         if self.type not in BUILTIN_SERVICE_TYPES:

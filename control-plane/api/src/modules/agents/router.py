@@ -42,6 +42,7 @@ from modules.agents.schemas import (
 from modules.alerts.service import evaluate_alerts
 from modules.auth.dependencies import CurrentUser, requires
 from modules.auth.schemas import PermissionName
+from modules.telemetry.enrichment import enrich
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 Session: TypeAlias = Annotated[AsyncSession, Depends(get_session)]
@@ -278,6 +279,7 @@ async def ingest_agent_events(
         row = event.model_dump()
         row["event_id"] = row.pop("id")
         row["ts"] = event.ts.astimezone(UTC)
+        row["data"] = await enrich(event.src, row.get("data") or {})
         rows.append({**row, "agent_id": agent.id})
     insert_factory = sqlite_insert if session.bind.dialect.name == "sqlite" else insert
     await session.execute(
