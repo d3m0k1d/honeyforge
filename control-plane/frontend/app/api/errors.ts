@@ -67,6 +67,24 @@ function statusFallback(status?: number, hasResponse = true): string {
   return "Неизвестная ошибка запроса";
 }
 
+/** Перевод типичных ошибок авторизации HoneypotForge API на человекочитаемый русский. */
+export function humanizeAuthError(error: ApiError): string {
+  if (error.status === 401) return "Неверный e-mail или пароль";
+  if (error.status === 403)
+    return "Доступ запрещён: аккаунт неактивен или не хватает прав";
+  if (error.status === 409) return "Пользователь с таким e-mail уже существует";
+
+  if (error.status === 422) {
+    if (/at least 12/i.test(error.message))
+      return "Пароль должен содержать минимум 12 символов";
+    if (/not a valid email/i.test(error.message)) return "Некорректный e-mail";
+
+    return "Проверьте корректность заполненных полей";
+  }
+
+  return error.message;
+}
+
 export function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
 

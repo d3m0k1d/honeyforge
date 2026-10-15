@@ -39,11 +39,13 @@ const passwordPending = ref(false);
 
 const passwordFormError = computed(() => {
   if (!newPassword.value && !confirmNew.value) return null;
-  if (newPassword.value.length < 6) return "Минимум 6 символов";
+  if (newPassword.value.length < 12) return "Минимум 12 символов";
   if (newPassword.value !== confirmNew.value) return "Пароли не совпадают";
 
   return null;
 });
+
+const canSelfReset = computed(() => auth.can("users:manage"));
 
 const canChangePassword = computed(
   () =>
@@ -380,50 +382,61 @@ onMounted(() => {
         :ui="{ leading: 'pointer-events-none' }"
       />
 
-      <UInput
-        v-model="currentPassword"
-        type="password"
-        icon="i-lucide-key-round"
-        placeholder="Текущий пароль"
-        class="w-full"
-        autocomplete="current-password"
-        :ui="{ leading: 'pointer-events-none' }"
+      <UAlert
+        v-if="!canSelfReset"
+        color="info"
+        variant="soft"
+        icon="i-lucide-info"
+        title="Смена пароля доступна администратору"
+        description="Обратитесь к администратору — он сбросит пароль в админ-панели."
       />
 
-      <UInput
-        v-model="newPassword"
-        type="password"
-        icon="i-lucide-key-round"
-        placeholder="Новый пароль — минимум 6 символов"
-        class="w-full"
-        autocomplete="new-password"
-        :ui="{ leading: 'pointer-events-none' }"
-      />
-
-      <UInput
-        v-model="confirmNew"
-        type="password"
-        icon="i-lucide-key-round"
-        placeholder="Повторите новый пароль"
-        class="w-full"
-        autocomplete="new-password"
-        :ui="{ leading: 'pointer-events-none' }"
-      />
-
-      <p v-if="passwordFormError" class="text-xs text-error">
-        {{ passwordFormError }}
-      </p>
-
-      <div class="flex justify-end">
-        <UButton
-          class="cursor-pointer"
-          icon="i-lucide-shield-check"
-          label="Сменить пароль"
-          :loading="passwordPending"
-          :disabled="!canChangePassword"
-          @click="onChangePassword"
+      <template v-else>
+        <UInput
+          v-model="currentPassword"
+          type="password"
+          icon="i-lucide-key-round"
+          placeholder="Текущий пароль"
+          class="w-full"
+          autocomplete="current-password"
+          :ui="{ leading: 'pointer-events-none' }"
         />
-      </div>
+
+        <UInput
+          v-model="newPassword"
+          type="password"
+          icon="i-lucide-key-round"
+          placeholder="Новый пароль — минимум 12 символов"
+          class="w-full"
+          autocomplete="new-password"
+          :ui="{ leading: 'pointer-events-none' }"
+        />
+
+        <UInput
+          v-model="confirmNew"
+          type="password"
+          icon="i-lucide-key-round"
+          placeholder="Повторите новый пароль"
+          class="w-full"
+          autocomplete="new-password"
+          :ui="{ leading: 'pointer-events-none' }"
+        />
+
+        <p v-if="passwordFormError" class="text-xs text-error">
+          {{ passwordFormError }}
+        </p>
+
+        <div class="flex justify-end">
+          <UButton
+            class="cursor-pointer"
+            icon="i-lucide-shield-check"
+            label="Сменить пароль"
+            :loading="passwordPending"
+            :disabled="!canChangePassword"
+            @click="onChangePassword"
+          />
+        </div>
+      </template>
     </UCard>
 
     <UCard :ui="{ body: 'flex flex-wrap items-center justify-between gap-3' }">

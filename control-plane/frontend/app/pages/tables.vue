@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { TabKey } from "~/types/database";
 
-definePageMeta({ layout: "tables" });
+definePageMeta({ layout: "tables", permission: "databases:read" });
 
 const store = useTablesStore();
 

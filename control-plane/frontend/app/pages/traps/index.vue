@@ -1,4 +1,6 @@
 <script setup lang="ts">
+definePageMeta({ permission: "honeypots:read" });
+
 import { PROFILES } from "~/utils/traps";
 
 const store = useTrapsStore();

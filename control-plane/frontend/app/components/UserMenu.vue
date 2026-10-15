@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { DropdownMenuItem } from "@nuxt/ui";
+
 const auth = useAuthStore();
 const router = useRouter();
 
@@ -8,13 +10,13 @@ const dropdownUi = {
   itemLeadingIcon: "text-muted",
 };
 
-const items = computed(() => {
-  const main = [
+const items = computed<DropdownMenuItem[][]>(() => {
+  const main: DropdownMenuItem[] = [
     { label: "Профиль", icon: "i-lucide-user-round", to: "/profile" },
     { label: "Настройки", icon: "i-lucide-settings", to: "/settings" },
   ];
 
-  if (auth.user?.isAdmin) {
+  if (auth.canAny("users:read", "roles:read")) {
     main.splice(1, 0, {
       label: "Админ-панель",
       icon: "i-lucide-shield-alert",

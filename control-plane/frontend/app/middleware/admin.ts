@@ -5,7 +5,8 @@ export default defineNuxtRouteMiddleware((to) => {
     return navigateTo(`/login?redirect=${encodeURIComponent(to.fullPath)}`);
   }
 
-  if (!auth.user?.isAdmin) {
+  // Админ-панель доступна владельцам прав на пользователей или роли
+  if (!auth.canAny("users:read", "roles:read")) {
     return navigateTo("/");
   }
 });

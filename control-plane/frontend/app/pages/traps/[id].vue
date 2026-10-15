@@ -1,4 +1,6 @@
 <script setup lang="ts">
+definePageMeta({ permission: "honeypots:read" });
+
 import type { Trap } from "~/types/traps";
 import {
   AGENT_BY_ID,

@@ -1,68 +1,19 @@
 import { defineStore } from "pinia";
-import type { Role } from "~/types/admin";
-import { ADMIN_SERVICES, PERMISSIONS } from "~/utils/admin";
-import { createId } from "~/utils/schema";
-
-const ROLES_KEY = "honeypotforge:roles";
-const ALL_PERMISSIONS = PERMISSIONS.map((permission) => permission.id);
-
-const SEED_ROLES: Role[] = [
-  {
-    id: "admin",
-    name: "admin",
-    description: "Полный доступ ко всем сервисам платформы",
-    permissions: [...ALL_PERMISSIONS],
-  },
-  {
-    id: "operator",
-    name: "operator",
-    description: "Обслуживание сенсоров и разбор инцидентов",
-    permissions: [
-      "users.read",
-      "incidents.read",
-      "incidents.write",
-      "sensors.manage",
-      "sensors.deploy",
-      "logs.read",
-    ],
-  },
-  {
-    id: "analyst",
-    name: "analyst",
-    description: "Только наблюдение за инцидентами и журналами",
-    permissions: ["incidents.read", "logs.read"],
-  },
-];
-
-function isClient() {
-  return import.meta.client;
-}
-
-function readCustomRoles(): Role[] {
-  if (!isClient()) return [];
-
-  try {
-    const raw = localStorage.getItem(ROLES_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-
-    return Array.isArray(parsed) ? (parsed as Role[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeRoles(list: Role[]) {
-  if (!isClient()) return;
-
-  localStorage.setItem(ROLES_KEY, JSON.stringify(list));
-}
+import type { PermissionRead, RoleRead } from "~/types/api";
+import { authApi } from "~/api/auth";
+import { humanizeAuthError, toApiError } from "~/api/errors";
+import { ADMIN_SERVICES } from "~/utils/admin";
 
 export const useAdminStore = defineStore("admin", () => {
   const services = ADMIN_SERVICES;
   const activeServiceId = ref(ADMIN_SERVICES[0]!.id);
-  const customRoles = ref<Role[]>([]);
 
-  const roles = computed(() => [...customRoles.value, ...SEED_ROLES]);
+  const roles = ref<RoleRead[]>([]);
+  const permissions = ref<PermissionRead[]>([]);
+  const loading = ref(false);
+  const error = ref<string | null>(null);
+
+  let loaded = false;
 
   const activeService = computed(
     () =>
@@ -70,63 +21,56 @@ export const useAdminStore = defineStore("admin", () => {
       services[0]!,
   );
 
-  const seedRoleIds = computed(() => SEED_ROLES.map((role) => role.id));
+  /** Права, сгруппированные по ресурсу (users, honeypots, ...). */
+  const groupedPermissions = computed(() => {
+    const map = new Map<string, PermissionRead[]>();
 
-  function roleName(id: string) {
-    return roles.value.find((role) => role.id === id)?.name ?? id;
-  }
+    for (const permission of permissions.value) {
+      const list = map.get(permission.group) ?? [];
+      list.push(permission);
+      map.set(permission.group, list);
+    }
 
-  function loadRoles() {
-    customRoles.value = readCustomRoles();
-  }
+    return [...map.entries()].map(([group, items]) => ({ group, items }));
+  });
 
   function setService(id: string) {
     activeServiceId.value = id;
   }
 
-  function createRole(input: {
-    name: string;
-    description: string;
-    permissions: string[];
-  }) {
-    const name = input.name.trim();
+  /** Загрузка ролей и справочника прав (нужен permission roles:read). */
+  async function load(force = false): Promise<void> {
+    if (loading.value || (!force && loaded)) return;
 
-    if (!name) return null;
+    loading.value = true;
+    error.value = null;
 
-    if (
-      roles.value.some((role) => role.name.toLowerCase() === name.toLowerCase())
-    ) {
-      return null;
+    try {
+      const [roleList, permissionList] = await Promise.all([
+        authApi.roles({ force }),
+        authApi.permissions({ force }),
+      ]);
+
+      roles.value = roleList;
+      permissions.value = permissionList;
+      loaded = true;
+    } catch (err) {
+      error.value = humanizeAuthError(toApiError(err));
+    } finally {
+      loading.value = false;
     }
-
-    const role: Role = {
-      id: createId("role"),
-      name,
-      description: input.description.trim(),
-      permissions: [...input.permissions],
-    };
-
-    customRoles.value = [...customRoles.value, role];
-    writeRoles(customRoles.value);
-
-    return role;
-  }
-
-  function deleteRole(id: string) {
-    customRoles.value = customRoles.value.filter((role) => role.id !== id);
-    writeRoles(customRoles.value);
   }
 
   return {
     services,
     activeServiceId,
     activeService,
-    seedRoleIds,
     roles,
-    roleName,
-    loadRoles,
+    permissions,
+    groupedPermissions,
+    loading,
+    error,
     setService,
-    createRole,
-    deleteRole,
+    load,
   };
 });

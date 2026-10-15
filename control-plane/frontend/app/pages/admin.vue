@@ -3,21 +3,31 @@ definePageMeta({ layout: "admin", middleware: "admin" });
 
 const auth = useAuthStore();
 const admin = useAdminStore();
+const usersStore = useUsersStore();
 
-const tabs = [
-  {
-    label: "Пользователи",
-    value: "users",
-    icon: "i-lucide-users-round",
-    slot: "users",
-  },
-  {
-    label: "Роли и разрешения",
-    value: "roles",
-    icon: "i-lucide-shield-check",
-    slot: "roles",
-  },
-];
+interface AdminTab {
+  label: string;
+  value: string;
+  icon: string;
+  slot: string;
+}
+
+const tabs = computed<AdminTab[]>(() =>
+  [
+    auth.can("users:read") && {
+      label: "Пользователи",
+      value: "users",
+      icon: "i-lucide-users-round",
+      slot: "users",
+    },
+    auth.can("roles:read") && {
+      label: "Роли и разрешения",
+      value: "roles",
+      icon: "i-lucide-shield-check",
+      slot: "roles",
+    },
+  ].filter((tab): tab is AdminTab => Boolean(tab)),
+);
 
 const tabsUi = {
   list: "w-full bg-muted/40 border border-default rounded-lg p-0.5",
@@ -25,11 +35,11 @@ const tabsUi = {
   content: "p-4 sm:p-5",
 };
 
-const tab = ref("users");
+const tab = ref(tabs.value[0]?.value ?? "users");
 
 onMounted(() => {
-  auth.loadUsers();
-  admin.loadRoles();
+  usersStore.fetch();
+  admin.load();
 });
 </script>
 

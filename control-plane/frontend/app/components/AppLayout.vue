@@ -8,17 +8,31 @@ const analytics = useAnalyticsStore();
 
 const sidebarOpen = defineModel<boolean>("sidebar", { default: false });
 
-const menuItems: RadialMenuItem[] = [
+interface MenuItem extends RadialMenuItem {
+  /** Permission из ролей API; скрывается у вошедшего без него. */
+  permission?: string;
+}
+
+const BASE_MENU_ITEMS: MenuItem[] = [
   { label: "Дашборд", to: "/", icon: "i-lucide-layout-dashboard" },
-  { label: "Ловушки", to: "/traps", icon: "i-lucide-radar" },
-  { label: "Профили", to: "/traps/profiles", icon: "i-lucide-blocks" },
-  { label: "Аналитика", to: "/analytics", icon: "i-lucide-chart-line" },
-  { label: "Инциденты", to: "/incidents", icon: "i-lucide-shield-alert" },
-  { label: "Сенсоры", to: "/sensors", icon: "i-lucide-server-cog" },
-  { label: "Конструктор", to: "/tables", icon: "i-lucide-database" },
-  { label: "Журналы", to: "/logs", icon: "i-lucide-terminal" },
+  { label: "Ловушки", to: "/traps", icon: "i-lucide-radar", permission: "honeypots:read" },
+  { label: "Профили", to: "/traps/profiles", icon: "i-lucide-blocks", permission: "profiles:read" },
+  { label: "Аналитика", to: "/analytics", icon: "i-lucide-chart-line", permission: "analytics:read" },
+  { label: "Инциденты", to: "/incidents", icon: "i-lucide-shield-alert", permission: "alerts:read" },
+  { label: "Сенсоры", to: "/sensors", icon: "i-lucide-server-cog", permission: "agents:read" },
+  { label: "Конструктор", to: "/tables", icon: "i-lucide-database", permission: "databases:read" },
+  { label: "Журналы", to: "/logs", icon: "i-lucide-terminal", permission: "audit:read" },
   { label: "Настройки", to: "/settings", icon: "i-lucide-settings" },
 ];
+
+const menuItems = computed<MenuItem[]>(() =>
+  BASE_MENU_ITEMS.filter(
+    (item) =>
+      !item.permission ||
+      !auth.isAuthenticated ||
+      auth.can(item.permission),
+  ),
+);
 
 const radialEnabled = computed(() => settings.navMode === "radial");
 

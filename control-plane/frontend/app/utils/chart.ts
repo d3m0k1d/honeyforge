@@ -30,7 +30,9 @@ Chart.register(
 );
 
 Chart.defaults.font.size = 11;
-Chart.defaults.animation.duration = 400;
+if (Chart.defaults.animation !== false) {
+  Chart.defaults.animation.duration = 400;
+}
 
 export { Chart };
 export type { ChartType, ChartData, ChartOptions } from "chart.js";

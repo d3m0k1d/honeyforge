@@ -17,7 +17,7 @@ function seedTables(): TableSchema[] {
     {
       id: "tbl_users",
       name: "users",
-      color: TABLE_COLORS[0],
+      color: TABLE_COLORS[0]!,
       x: 60,
       y: 80,
       columns: [
@@ -61,7 +61,7 @@ function seedTables(): TableSchema[] {
     {
       id: "tbl_sessions",
       name: "sessions",
-      color: TABLE_COLORS[1],
+      color: TABLE_COLORS[1]!,
       x: 420,
       y: 150,
       columns: [
@@ -105,7 +105,7 @@ function seedTables(): TableSchema[] {
     {
       id: "tbl_alerts",
       name: "alerts",
-      color: TABLE_COLORS[4],
+      color: TABLE_COLORS[4]!,
       x: 760,
       y: 90,
       columns: [

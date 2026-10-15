@@ -1,75 +1,10 @@
 <script setup lang="ts">
-import type { Permission } from "~/types/admin";
-import { PERMISSIONS, permissionLabel } from "~/utils/admin";
+import { roleLabel } from "~/utils/admin";
 
 const admin = useAdminStore();
-const toast = useToast();
 
-const modalOpen = ref(false);
-
-const form = reactive({
-  name: "",
-  description: "",
-  permissions: [] as string[],
-});
-
-const canSubmit = computed(() => Boolean(form.name.trim()));
-
-const groupedPermissions = computed(() => {
-  const map = new Map<string, Permission[]>();
-
-  for (const permission of PERMISSIONS) {
-    const list = map.get(permission.group) ?? [];
-    list.push(permission);
-    map.set(permission.group, list);
-  }
-
-  return [...map.entries()].map(([group, items]) => ({ group, items }));
-});
-
-function isSeedRole(id: string) {
-  return admin.seedRoleIds.includes(id);
-}
-
-function togglePermission(id: string, value: boolean) {
-  form.permissions = value
-    ? [...form.permissions, id]
-    : form.permissions.filter((permission) => permission !== id);
-}
-
-watch(modalOpen, (open) => {
-  if (!open) return;
-
-  form.name = "";
-  form.description = "";
-  form.permissions = [];
-});
-
-function submit() {
-  const created = admin.createRole({
-    name: form.name,
-    description: form.description,
-    permissions: form.permissions,
-  });
-
-  if (!created) {
-    toast.add({
-      title: "Не удалось создать роль",
-      description: "Проверьте название — роль с таким именем уже существует",
-      color: "error",
-      icon: "i-lucide-triangle-alert",
-    });
-    return;
-  }
-
-  toast.add({
-    title: `Роль ${created.name} создана`,
-    description: `Разрешений: ${created.permissions.length}`,
-    color: "success",
-    icon: "i-lucide-check",
-  });
-
-  modalOpen.value = false;
+function hasPermission(rolePermissions: string[], permission: string) {
+  return rolePermissions.includes(permission);
 }
 </script>
 
@@ -78,55 +13,48 @@ function submit() {
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex items-center gap-2">
         <UIcon name="i-lucide-shield-check" class="size-4 text-dimmed" />
-        <span class="text-eyebrow">
-          Роли
-        </span>
+        <span class="text-eyebrow">Роли и разрешения</span>
         <UBadge color="neutral" variant="outline" size="sm">
           {{ admin.roles.length }}
         </UBadge>
       </div>
-      <UButton
-        class="cursor-pointer"
-        icon="i-lucide-plus"
-        label="Создать роль"
-        size="sm"
-        @click="modalOpen = true"
-      />
+      <UBadge color="neutral" variant="outline" size="sm">
+        {{ admin.permissions.length }} прав
+      </UBadge>
     </div>
 
-    <div class="space-y-3">
+    <UAlert
+      v-if="admin.error"
+      color="error"
+      variant="soft"
+      icon="i-lucide-triangle-alert"
+      :title="admin.error"
+    />
+
+    <div
+      v-if="admin.loading && !admin.roles.length"
+      class="flex items-center justify-center gap-2 rounded-lg border border-default py-8"
+    >
+      <UIcon name="i-lucide-loader-circle" class="size-4 animate-spin text-dimmed" />
+      <span class="text-xs text-muted">Загрузка ролей…</span>
+    </div>
+
+    <div v-else class="space-y-3">
       <div
         v-for="role in admin.roles"
-        :key="role.id"
+        :key="role.name"
         class="rounded-lg border border-default bg-elevated/40 p-4"
       >
-        <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0">
-            <div class="flex flex-wrap items-center gap-2">
-              <span class="text-sm font-semibold text-highlighted">
-                {{ role.name }}
-              </span>
-              <UBadge
-                color="neutral"
-                variant="outline"
-                size="sm"
-                :label="`${role.permissions.length} прав`"
-              />
-            </div>
-            <p class="mt-0.5 text-xs text-muted">
-              {{ role.description || "Без описания" }}
-            </p>
-          </div>
-
-          <UButton
-            v-if="!isSeedRole(role.id)"
-            class="cursor-pointer"
-            icon="i-lucide-trash-2"
-            color="error"
-            variant="ghost"
-            size="xs"
-            aria-label="Удалить роль"
-            @click="admin.deleteRole(role.id)"
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-sm font-semibold text-highlighted">
+            {{ roleLabel(role.name) }}
+          </span>
+          <UBadge color="neutral" variant="outline" size="sm" :label="role.name" />
+          <UBadge
+            color="neutral"
+            variant="subtle"
+            size="sm"
+            :label="`${role.permissions.length} прав`"
           />
         </div>
 
@@ -137,83 +65,66 @@ function submit() {
             color="neutral"
             variant="subtle"
             size="sm"
-            :label="permissionLabel(permission)"
+            :label="permission"
           />
           <span v-if="!role.permissions.length" class="text-xs text-dimmed">
             без разрешений
           </span>
         </div>
       </div>
-    </div>
 
-    <UModal
-      v-model:open="modalOpen"
-      title="Новая роль"
-      description="Название, описание и набор разрешений"
-      :ui="{ content: 'max-w-2xl' }"
-    >
-      <template #body>
-        <div class="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
-          <UFormField label="Название" required>
-            <UInput
-              v-model="form.name"
-              placeholder="например, auditor"
-              class="w-full font-mono"
-              icon="i-lucide-tag"
-              :ui="{ leading: 'pointer-events-none' }"
-            />
-          </UFormField>
-
-          <UFormField label="Описание">
-            <UTextarea
-              v-model="form.description"
-              placeholder="За что отвечает роль"
-              class="w-full"
-              :rows="2"
-            />
-          </UFormField>
-
-          <div
-            v-for="group in groupedPermissions"
-            :key="group.group"
-            class="space-y-2"
-          >
-            <span class="text-eyebrow">
-              {{ group.group }}
-            </span>
-            <div class="flex flex-wrap gap-x-5 gap-y-2">
-              <UCheckbox
+      <div
+        v-if="admin.groupedPermissions.length && admin.roles.length"
+        class="overflow-x-auto rounded-lg border border-default"
+      >
+        <table class="w-full min-w-[520px] text-left text-xs">
+          <thead>
+            <tr class="border-b border-default bg-muted/30">
+              <th class="px-4 py-2.5 font-medium text-muted">Разрешение</th>
+              <th
+                v-for="role in admin.roles"
+                :key="role.name"
+                class="px-3 py-2.5 text-center font-medium text-muted"
+              >
+                {{ roleLabel(role.name) }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="group in admin.groupedPermissions" :key="group.group">
+              <tr class="border-b border-default bg-elevated/40">
+                <td
+                  :colspan="admin.roles.length + 1"
+                  class="px-4 py-1.5 text-eyebrow"
+                >
+                  {{ group.group }}
+                </td>
+              </tr>
+              <tr
                 v-for="permission in group.items"
-                :key="permission.id"
-                :model-value="form.permissions.includes(permission.id)"
-                :label="permission.label"
-                @update:model-value="
-                  togglePermission(permission.id, $event)
-                "
-              />
-            </div>
-          </div>
-        </div>
-      </template>
-
-      <template #footer>
-        <div class="flex w-full justify-end gap-2">
-          <UButton
-            class="cursor-pointer"
-            color="neutral"
-            variant="ghost"
-            label="Отмена"
-            @click="modalOpen = false"
-          />
-          <UButton
-            class="cursor-pointer"
-            icon="i-lucide-check"
-            label="Создать"
-            :disabled="!canSubmit"
-            @click="submit"
-          />
-        </div>
-      </template>
-    </UModal>
+                :key="permission.name"
+                class="border-b border-default/60 last:border-0"
+              >
+                <td class="px-4 py-2 font-mono text-[11px] text-highlighted">
+                  {{ permission.name }}
+                </td>
+                <td
+                  v-for="role in admin.roles"
+                  :key="role.name"
+                  class="px-3 py-2 text-center"
+                >
+                  <UIcon
+                    v-if="hasPermission(role.permissions, permission.name)"
+                    name="i-lucide-check"
+                    class="size-4 text-success"
+                  />
+                  <UIcon v-else name="i-lucide-minus" class="size-4 text-dimmed" />
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </template>

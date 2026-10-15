@@ -1,4 +1,6 @@
 <script setup lang="ts">
+definePageMeta({ permission: "profiles:read" });
+
 import type { TrapProfile } from "~/types/traps";
 
 const store = useTrapsStore();

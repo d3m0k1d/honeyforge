@@ -1,57 +1,15 @@
-import type { AdminService, Permission } from "~/types/admin";
+import type { AdminService } from "~/types/admin";
 
-export const PERMISSIONS: Permission[] = [
-  {
-    id: "users.read",
-    label: "Просмотр пользователей",
-    group: "Пользователи",
-  },
-  {
-    id: "users.write",
-    label: "Создание и блокировка пользователей",
-    group: "Пользователи",
-  },
-  {
-    id: "roles.manage",
-    label: "Управление ролями и разрешениями",
-    group: "Пользователи",
-  },
-  {
-    id: "incidents.read",
-    label: "Просмотр инцидентов",
-    group: "Инциденты",
-  },
-  {
-    id: "incidents.write",
-    label: "Закрытие и эскалация инцидентов",
-    group: "Инциденты",
-  },
-  {
-    id: "incidents.delete",
-    label: "Удаление инцидентов",
-    group: "Инциденты",
-  },
-  {
-    id: "sensors.manage",
-    label: "Управление honeypot-сенсорами",
-    group: "Инфраструктура",
-  },
-  {
-    id: "sensors.deploy",
-    label: "Выкладка конфигураций сенсоров",
-    group: "Инфраструктура",
-  },
-  {
-    id: "logs.read",
-    label: "Чтение журналов аудита",
-    group: "Инфраструктура",
-  },
-  {
-    id: "settings.manage",
-    label: "Изменение системных настроек",
-    group: "Инфраструктура",
-  },
-];
+/** Человекочитаемые названия ролей API. */
+export const ROLE_LABELS: Record<string, string> = {
+  admin: "Администратор",
+  operator: "Оператор",
+  viewer: "Наблюдатель",
+};
+
+export function roleLabel(id: string) {
+  return ROLE_LABELS[id] ?? id;
+}
 
 export const ADMIN_SERVICES: AdminService[] = [
   {
@@ -97,7 +55,3 @@ export const ADMIN_SERVICES: AdminService[] = [
     ready: false,
   },
 ];
-
-export function permissionLabel(id: string) {
-  return PERMISSIONS.find((permission) => permission.id === id)?.label ?? id;
-}

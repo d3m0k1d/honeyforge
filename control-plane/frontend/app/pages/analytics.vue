@@ -1,4 +1,6 @@
 <script setup lang="ts">
+definePageMeta({ permission: "analytics:read" });
+
 import type { ChartData, ChartOptions } from "chart.js";
 import { ACTION_LABELS } from "~/utils/traps";
 import { PERIODS } from "~/stores/analytics";

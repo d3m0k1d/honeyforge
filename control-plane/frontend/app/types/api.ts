@@ -1,6 +1,10 @@
 // Auto-generated from the OpenAPI spec of HoneypotForge API (localhost:8000/openapi.json).
 // Do not edit by hand — regenerate when the backend spec changes.
 
+export interface AdminPasswordReset {
+  password: string;
+}
+
 export interface AgentConfigRead {
   version: number;
   log: AgentLog;
@@ -33,7 +37,7 @@ export interface AgentEventRead {
   src?: string | null;
   event: string;
   rule?: string | null;
-  data?: Record<string, string> | null;
+  data?: Record<string, unknown> | null;
 }
 
 export interface AgentHeartbeatRead {
@@ -54,6 +58,13 @@ export interface AgentHoneytoken {
 
 export interface AgentLog {
   output?: string;
+  capture_connections?: boolean;
+  capture_credentials?: boolean;
+  capture_commands?: boolean;
+  capture_requests?: boolean;
+  capture_payloads?: boolean;
+  capture_session_content?: boolean;
+  max_payload_bytes?: number;
 }
 
 export interface AgentMasking {
@@ -148,10 +159,38 @@ export interface AuditLogRead {
   created_at: string;
 }
 
+export interface Body_ingest_artifact_agents_artifacts_post {
+  artifact_id: string;
+  kind: string;
+  file: string;
+  session_id?: string | null;
+  event_id?: string | null;
+  checksum_sha256?: string | null;
+  metadata?: string;
+}
+
 export interface Body_upload_deployment_artifact_deployment_artifacts_post {
   kind: ArtifactKind;
   entrypoint: string;
   file: string;
+}
+
+export interface Body_upload_qemu_image_qemu_images_post {
+  file: string;
+}
+
+export interface CapturedArtifactRead {
+  id: string;
+  agent_id: string;
+  session_id: string | null;
+  event_id: string | null;
+  uploaded_at: string;
+  kind: string;
+  file_name: string;
+  content_type: string;
+  size_bytes: number;
+  checksum_sha256: string;
+  data: Record<string, unknown>;
 }
 
 export interface CommandClaim {
@@ -183,10 +222,11 @@ export interface CommandResult {
 
 export type CommandStatus = "queued" | "leased" | "running" | "succeeded" | "failed" | "cancelled";
 
-export type DeploymentAction = "start" | "stop" | "destroy" | "reconcile";
+export type DeploymentAction = "start" | "stop" | "destroy" | "reconcile" | "update" | "rotate_credentials";
 
 export interface DeploymentActionRequest {
   action: DeploymentAction;
+  parameters?: Record<string, unknown>;
 }
 
 export interface DeploymentCreate {
@@ -237,6 +277,7 @@ export interface EventRead {
   data: Record<string, unknown> | null;
   geo?: string | null;
   asn?: string | null;
+  protocol?: string | null;
   source_port?: number | null;
   destination_port?: number | null;
   username?: string | null;
@@ -252,6 +293,8 @@ export interface EventStats {
   by_event: Record<string, number>;
   by_service: Record<string, number>;
   top_sources: Record<string, number>;
+  by_geo: Record<string, number>;
+  by_asn: Record<string, number>;
   generated_at: string;
 }
 
@@ -306,12 +349,35 @@ export interface HoneytokenRead {
   updated_at: string;
 }
 
+export interface HoneytokenTriggerCreate {
+  id: string;
+  honeytoken_id: number;
+  triggered_at: string;
+  src?: string | null;
+  context?: Record<string, unknown>;
+}
+
+export interface HoneytokenTriggerRead {
+  id: string;
+  honeytoken_id: number;
+  honeytoken_name: string;
+  agent_id: string;
+  triggered_at: string;
+  src: string | null;
+  context: Record<string, unknown>;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
 }
 
-export type PermissionName = "users:read" | "users:manage" | "roles:read" | "roles:manage" | "honeypots:read" | "honeypots:manage" | "honeytokens:read" | "honeytokens:manage" | "agents:read" | "agents:manage" | "deployments:read" | "deployments:manage" | "profiles:read" | "profiles:manage" | "events:read" | "audit:read" | "alerts:read" | "alerts:manage";
+export type PermissionName = "users:read" | "users:manage" | "roles:read" | "roles:manage" | "honeypots:read" | "honeypots:manage" | "honeytokens:read" | "honeytokens:manage" | "agents:read" | "agents:manage" | "deployments:read" | "deployments:manage" | "profiles:read" | "profiles:manage" | "events:read" | "sessions:read" | "artifacts:read" | "audit:read" | "alerts:read" | "alerts:manage" | "databases:read" | "databases:manage" | "analytics:read";
+
+export interface PermissionRead {
+  name: PermissionName;
+  group: string;
+}
 
 export interface ProfileCreate {
   name: string;
@@ -347,6 +413,23 @@ export interface ProfileUpdate {
   honeytoken_ids?: number[];
 }
 
+export interface QEMUImageRead {
+  name: string;
+  size_bytes: number;
+  checksum_sha256: string;
+}
+
+export interface QueryRequest {
+  sql: string;
+  limit?: number;
+}
+
+export interface QueryResponse {
+  columns: string[];
+  rows: unknown[][];
+  affected_rows?: number;
+}
+
 export interface ResetRequest {
   preserve_incident?: boolean;
 }
@@ -372,6 +455,48 @@ export interface ServiceRule {
   close?: boolean;
 }
 
+export interface SessionBatch {
+  sessions: SessionReport[];
+}
+
+export interface SessionRead {
+  id: string;
+  started_at: string;
+  ended_at?: string | null;
+  service: string;
+  level?: "low" | "medium" | "high" | null;
+  src?: string | null;
+  protocol?: string | null;
+  source_port?: number | null;
+  destination_port?: number | null;
+  username?: string | null;
+  credentials?: Record<string, unknown> | null;
+  commands?: string[];
+  requests?: string[];
+  transcript?: string | null;
+  data?: Record<string, unknown>;
+  agent_id: string;
+  duration_ms: number | null;
+}
+
+export interface SessionReport {
+  id: string;
+  started_at: string;
+  ended_at?: string | null;
+  service: string;
+  level?: "low" | "medium" | "high" | null;
+  src?: string | null;
+  protocol?: string | null;
+  source_port?: number | null;
+  destination_port?: number | null;
+  username?: string | null;
+  credentials?: Record<string, unknown> | null;
+  commands?: string[];
+  requests?: string[];
+  transcript?: string | null;
+  data?: Record<string, unknown>;
+}
+
 export interface SnapshotCreate {
   type?: string;
 }
@@ -389,6 +514,12 @@ export interface SnapshotRead {
   ready_at: string | null;
 }
 
+export interface TableDefinition {
+  name: string;
+  columns?: Array<Record<string, unknown>>;
+  rows?: Array<Record<string, unknown>>;
+}
+
 export interface TokenResponse {
   access_token: string;
   token_type?: string;
@@ -398,6 +529,12 @@ export interface TokenResponse {
 export interface UserCreate {
   email: string;
   password: string;
+  first_name: string;
+  last_name: string;
+}
+
+export interface UserProfileUpdate {
+  email: string;
   first_name: string;
   last_name: string;
 }
@@ -416,10 +553,29 @@ export interface UserRolesUpdate {
   roles: RoleName[];
 }
 
+export interface UserStatusUpdate {
+  is_active: boolean;
+}
+
 export interface ValidationError {
   loc: Array<string | number>;
   msg: string;
   type: string;
   input?: unknown;
   ctx?: Record<string, unknown>;
+}
+
+export interface WorkspaceCreate {
+  name: string;
+  description?: string | null;
+  tables?: TableDefinition[];
+}
+
+export interface WorkspaceRead {
+  name: string;
+  description?: string | null;
+  tables?: TableDefinition[];
+  id: string;
+  created_at: string;
+  updated_at: string;
 }
