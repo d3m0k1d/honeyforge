@@ -47,6 +47,7 @@ def event_dict(event: AgentEvent, agent_id: str) -> dict[str, Any]:
         "request": data.get("request"),
         "payload": data.get("payload"),
         "session_id": data.get("session_id"),
+        "severity": data.get("severity"),
     }
 
 

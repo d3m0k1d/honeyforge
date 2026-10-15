@@ -26,6 +26,7 @@ class EventRead(BaseModel):
     request: str | None = None
     payload: str | None = None
     session_id: UUID | None = None
+    severity: str | None = None
 
 
 class EventStats(BaseModel):

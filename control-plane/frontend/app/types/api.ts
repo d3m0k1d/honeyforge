@@ -237,6 +237,14 @@ export interface EventRead {
   data: Record<string, unknown> | null;
   geo?: string | null;
   asn?: string | null;
+  source_port?: number | null;
+  destination_port?: number | null;
+  username?: string | null;
+  command?: string | null;
+  request?: string | null;
+  payload?: string | null;
+  session_id?: string | null;
+  severity?: string | null;
 }
 
 export interface EventStats {
