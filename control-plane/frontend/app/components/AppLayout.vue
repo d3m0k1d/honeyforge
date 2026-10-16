@@ -15,22 +15,37 @@ interface MenuItem extends RadialMenuItem {
 
 const BASE_MENU_ITEMS: MenuItem[] = [
   { label: "Дашборд", to: "/", icon: "i-lucide-layout-dashboard" },
-  { label: "Ловушки", to: "/traps", icon: "i-lucide-radar", permission: "honeypots:read" },
-  { label: "Профили", to: "/traps/profiles", icon: "i-lucide-blocks", permission: "profiles:read" },
-  { label: "Аналитика", to: "/analytics", icon: "i-lucide-chart-line", permission: "analytics:read" },
-  { label: "Инциденты", to: "/incidents", icon: "i-lucide-shield-alert", permission: "alerts:read" },
-  { label: "Сенсоры", to: "/sensors", icon: "i-lucide-server-cog", permission: "agents:read" },
-  { label: "Конструктор", to: "/tables", icon: "i-lucide-database", permission: "databases:read" },
-  { label: "Журналы", to: "/logs", icon: "i-lucide-terminal", permission: "audit:read" },
+  {
+    label: "Ловушки",
+    to: "/traps",
+    icon: "i-lucide-radar",
+    permission: "honeypots:read",
+  },
+  {
+    label: "Профили",
+    to: "/traps/profiles",
+    icon: "i-lucide-blocks",
+    permission: "profiles:read",
+  },
+  {
+    label: "Аналитика",
+    to: "/analytics",
+    icon: "i-lucide-chart-line",
+    permission: "analytics:read",
+  },
+  {
+    label: "Конструктор",
+    to: "/tables",
+    icon: "i-lucide-database",
+    permission: "databases:read",
+  },
   { label: "Настройки", to: "/settings", icon: "i-lucide-settings" },
 ];
 
 const menuItems = computed<MenuItem[]>(() =>
   BASE_MENU_ITEMS.filter(
     (item) =>
-      !item.permission ||
-      !auth.isAuthenticated ||
-      auth.can(item.permission),
+      !item.permission || !auth.isAuthenticated || auth.can(item.permission),
   ),
 );
 

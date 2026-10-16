@@ -20,20 +20,6 @@ export const ADMIN_SERVICES: AdminService[] = [
     ready: true,
   },
   {
-    id: "sensors",
-    label: "Сенсоры",
-    description: "Реестр honeypot-ловушек и их статусы",
-    icon: "i-lucide-radar",
-    ready: false,
-  },
-  {
-    id: "incidents",
-    label: "Инциденты",
-    description: "Обработка зафиксированных атак",
-    icon: "i-lucide-shield-alert",
-    ready: false,
-  },
-  {
     id: "audit",
     label: "Журнал аудита",
     description: "История действий операторов",
