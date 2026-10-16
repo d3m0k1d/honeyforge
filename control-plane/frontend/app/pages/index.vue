@@ -254,7 +254,7 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
           "
         >
           <UCard :ui="{ body: 'p-4' }">
-            <p class="text-eyebrow">Hellrain · HoneypotForge</p>
+            <p class="text-eyebrow">HellReign · HoneypotForge</p>
             <h1 class="mt-1 text-sm font-semibold text-highlighted">
               Модерация honeypot-инцидентов в одном окне
             </h1>
@@ -331,7 +331,7 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
                 />
               </div>
               <h2 class="text-sm font-semibold text-highlighted">
-                Команда Hellrain
+                Команда HellReign
               </h2>
             </div>
             <p class="mt-2 text-xs leading-relaxed text-muted">
