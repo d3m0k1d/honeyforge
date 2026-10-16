@@ -1,9 +1,8 @@
 <script setup lang="ts">
-definePageMeta({ permission: "honeypots:read" });
-
-import { profileIconFor } from "~/utils/traps";
+definePageMeta({ permission: "deployments:read" });
 
 const store = useTrapsStore();
+const agents = useAgentsStore();
 const toast = useToast();
 const auth = useAuthStore();
 
@@ -19,35 +18,31 @@ const deleteOpen = computed({
 const stats = computed(() => [
   {
     label: "Ловушек",
-    value: String(store.traps.length),
+    value: store.loaded && !store.error ? String(store.traps.length) : "—",
     icon: "i-lucide-radar",
   },
   {
     label: "Агентов онлайн",
-    value: String(store.onlineCount),
+    value: store.onlineCount === null ? "—" : String(store.onlineCount),
     icon: "i-lucide-radio",
   },
   {
-    label: "Событий captured",
-    value: store.totalEvents.toLocaleString("ru-RU"),
+    label: "События по ловушкам",
+    value: "Недоступно",
     icon: "i-lucide-activity",
   },
   {
     label: "Профилей",
-    value: String(store.profiles.length),
+    value: !store.loaded || store.catalogueError ? "—" : String(store.profiles.length),
     icon: "i-lucide-blocks",
   },
 ]);
 
-const deletingIcon = computed(() => {
-  const trap = store.deletingTrap;
-  if (!trap) return "i-lucide-radar";
-
-  return (
-    store.profileIconById[trap.profileId] ??
-    profileIconFor(trap.services.map((service) => service.key))
-  );
-});
+const deletingIcon = computed(
+  () =>
+    store.profiles.find((profile) => profile.id === store.deletingTrap?.profileId)
+      ?.icon ?? "i-lucide-radar",
+);
 
 onMounted(() => {
   store.load();
@@ -56,11 +51,9 @@ onMounted(() => {
 async function confirmDelete() {
   const removed = await store.confirmDelete();
 
-  deleteOpen.value = false;
-
   if (removed) {
     toast.add({
-      title: `Ловушка ${removed.name} удалена`,
+      title: `Запрошено уничтожение: ${removed.name}`,
       color: "success",
       icon: "i-lucide-trash-2",
     });
@@ -89,13 +82,13 @@ async function confirmDelete() {
           Ловушки
         </h1>
         <p class="mt-1 max-w-2xl text-sm text-muted">
-          Развёрнутые honeypot-ловушки платформы: сервисы, порты, уровень
-          эмуляции, состояние агентов и количество перехваченных событий.
+          Настроенные honeypot-ловушки платформы: сервисы, порты, уровень
+          эмуляции и состояние агентов. API не предоставляет события по отдельной ловушке.
         </p>
       </div>
 
       <UButton
-        v-if="canManage"
+        v-if="store.canManage"
         class="cursor-pointer"
         icon="i-lucide-plus"
         label="Создать ловушку"
@@ -134,39 +127,23 @@ async function confirmDelete() {
       <span class="text-xs text-muted">Загрузка ловушек…</span>
     </div>
 
-    <template v-else>
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <UCard v-for="item in stats" :key="item.label" :ui="{ body: 'p-4' }">
-          <div class="flex items-center gap-3">
-            <div
-              class="flex size-9 items-center justify-center rounded-md border border-default bg-elevated"
-            >
-              <UIcon :name="item.icon" class="size-4 text-primary" />
-            </div>
-            <div>
-              <p class="text-eyebrow">
-                {{ item.label }}
-              </p>
-              <p class="mt-0.5 font-mono text-lg text-highlighted tabular-nums">
-                {{ item.value }}
-              </p>
-            </div>
-          </div>
-        </UCard>
-      </div>
+    <UAlert v-if="store.error" color="error" title="Не удалось загрузить ловушки" :description="store.error" />
+    <UAlert v-if="agents.error" color="warning" title="Данные агентов недоступны" :description="agents.error" />
+    <UAlert v-if="store.catalogueError" color="warning" title="Каталог недоступен" :description="store.catalogueError" />
+    <UButton label="Обновить" icon="i-lucide-refresh-cw" variant="outline" class="self-start" :loading="store.pending" @click="store.load()" />
+    <p v-if="store.pending" role="status" class="text-sm text-muted">Загрузка ловушек…</p>
+    <TrapsToolbar v-if="!store.pending && !store.error" />
 
-      <TrapsToolbar />
-
-      <TrapsTable />
-    </template>
+    <TrapsTable v-if="store.loaded && !store.error" />
 
     <UModal
       v-model:open="deleteOpen"
-      title="Удалить ловушку?"
-      description="Действие необратимо: конфигурация будет уничтожена"
+      title="Уничтожить ловушку?"
+      description="API поставит команду destroy в очередь. Запись развёртывания сохранится."
       :ui="{ content: 'max-w-md' }"
     >
       <template #body>
+        <UAlert v-if="store.actionError" color="error" :description="store.actionError" class="mb-3" />
         <div
           v-if="store.deletingTrap"
           class="flex items-center gap-3 rounded-lg border border-default bg-elevated/60 p-3"
@@ -200,8 +177,9 @@ async function confirmDelete() {
             class="cursor-pointer"
             color="error"
             icon="i-lucide-trash-2"
-            label="Удалить"
-            :loading="store.pending"
+            label="Уничтожить"
+            :loading="Boolean(store.actionPending)"
+            :disabled="!store.canManage || Boolean(store.actionPending)"
             @click="confirmDelete"
           />
         </div>

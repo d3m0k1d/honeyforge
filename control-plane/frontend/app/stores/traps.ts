@@ -12,8 +12,7 @@ import { resources } from "~/api/resources";
 import { toApiError } from "~/api/errors";
 import type {
   ServiceKey,
-  Trap,
-  TrapEvent,
+  DeploymentTrap as Trap,
   TrapFieldKey,
   TrapLevel,
   TrapProfile,
@@ -21,15 +20,14 @@ import type {
   TrapSort,
 } from "~/types/traps";
 import {
+  LEVEL_BY_KEY,
   TRAP_FIELDS,
-  catalogTypeFor,
-  deriveAgentStatus,
-  displayServiceKey,
-  mapEvent,
-  parseListenPort,
-  profileToTrapProfile,
-  serviceMeta,
 } from "~/utils/traps";
+import { resources } from "~/api/resources";
+import { toApiError } from "~/api/errors";
+import { clearCache } from "~/api/cache";
+import type { DeploymentCreate, DeploymentRead, DeploymentAction } from "~/types/api";
+import type { TrapProfile } from "~/types/traps";
 
 const FIELDS_KEY = "honeypotforge:trap-fields";
 
@@ -73,28 +71,44 @@ function levelWeight(level: TrapLevel) {
   return 1;
 }
 
-export interface CreateTrapInput {
-  name: string;
-  level: TrapLevel;
-  agentId: string;
-  services: TrapService[];
-  /** Образ QEMU (только для уровня high). */
-  image?: string;
+function compare(a: Trap, b: Trap, field: TrapSort["field"]) {
+  switch (field) {
+    case "profile":
+      return a.profileId.localeCompare(b.profileId, "ru");
+    case "port":
+      return (a.services[0]?.port ?? 0) - (b.services[0]?.port ?? 0);
+    case "level":
+      return levelWeight(a.level) - levelWeight(b.level);
+    case "agent":
+      return a.agentId.localeCompare(b.agentId, "ru");
+    case "events":
+      return (a.eventsCount ?? 0) - (b.eventsCount ?? 0);
+    case "createdAt":
+      return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+    case "services":
+      return a.services.length - b.services.length;
+    default:
+      return a.name.localeCompare(b.name, "ru");
+  }
 }
 
+export type CreateTrapInput = DeploymentCreate;
+
 export const useTrapsStore = defineStore("traps", () => {
+  const auth = useAuthStore();
+  const agentsStore = useAgentsStore();
   const traps = ref<Trap[]>([]);
-  const profiles = ref<ProfileRead[]>([]);
-  const agents = ref<AgentRead[]>([]);
-  const catalogSlugs = ref<string[]>([]);
-  const qemuImages = ref<QEMUImageRead[]>([]);
-  const eventsTotal = ref<number | null>(null);
-
-  const loading = ref(false);
+  const profiles = ref<TrapProfile[]>([]);
   const pending = ref(false);
+  const loaded = ref(false);
   const error = ref<string | null>(null);
-
-  const fieldVisibility = ref<Record<TrapFieldKey, boolean>>(defaultVisibility());
+  const catalogueError = ref<string | null>(null);
+  const actionError = ref<string | null>(null);
+  const actionPending = ref<string | null>(null);
+  const canManage = computed(() => auth.can("deployments:read") && auth.can("deployments:manage"));
+  const fieldVisibility = ref<Record<TrapFieldKey, boolean>>(
+    defaultVisibility(),
+  );
   const serviceVisibility = ref<Record<string, boolean>>({
     ssh: true,
     http: true,
@@ -108,7 +122,7 @@ export const useTrapsStore = defineStore("traps", () => {
   const search = ref("");
   const levelFilter = ref<"all" | TrapLevel>("all");
   const agentFilter = ref<"all" | Trap["agentStatus"]>("all");
-  const sort = ref<TrapSort>({ field: "events", direction: "desc" });
+  const sort = ref<TrapSort>({ field: "createdAt", direction: "desc" });
   const pendingDeleteId = ref<string | null>(null);
 
   const deploymentsRaw = ref<DeploymentRead[]>([]);
@@ -166,262 +180,165 @@ export const useTrapsStore = defineStore("traps", () => {
   );
 
   const hiddenFieldsCount = computed(
-    () => TRAP_FIELDS.filter((field) => !fieldVisibility.value[field.key]).length,
+    () =>
+      TRAP_FIELDS.filter((field) => !fieldVisibility.value[field.key]).length,
   );
+
+  const trapsByProfile = computed(
+    () =>
+      profiles.value.map((profile) => ({
+        profile,
+        count: loaded.value ? traps.value.filter((trap) => trap.profileId === profile.id).length : null,
+      })),
+  );
+
+  const filteredTraps = computed(() => {
+    const query = search.value.trim().toLowerCase();
+    const level = levelFilter.value;
+    const status = agentFilter.value;
+
+    const list = traps.value.filter((trap) => {
+      if (level !== "all" && trap.level !== level) return false;
+      if (status !== "all" && trap.agentStatus !== status) return false;
+
+      if (!query) return true;
+
+      const profile = profiles.value.find((item) => item.id === trap.profileId);
+      const haystack = [
+        trap.name,
+        trap.id,
+        trap.description,
+        profile?.name ?? "",
+        trap.agentId,
+        ...trap.services.map((service) => `${service.key} ${service.port}`),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(query);
+    });
+
+    const direction = sort.value.direction === "asc" ? 1 : -1;
+
+    return [...list].sort((a, b) => compare(a, b, sort.value.field) * direction);
+  });
+
+  const deletingTrap = computed(
+    () => traps.value.find((trap) => trap.id === pendingDeleteId.value) ?? null,
+  );
+
+  const totalEvents = computed(() => null);
 
   const onlineCount = computed(
-    () => agents.value.filter((agent) => agent.online).length,
+    () => agentsStore.onlineCount,
   );
 
-  const totalEvents = computed(() =>
-    eventsTotal.value ??
-    traps.value.reduce((sum, trap) => sum + trap.eventsCount, 0),
-  );
-
-  const hasQemuImageType = computed(() =>
-    catalogSlugs.value.includes("qemu-high"),
-  );
-
-  function mapDeployment(deployment: DeploymentRead): Trap {
-    const agent = agentsById.value[deployment.agent_id];
-    const profileId = agent?.profile_id ?? "";
-    const profile = profileId ? profilesById.value[profileId] : undefined;
-
-    const isHigh = deployment.honeypot_type === "qemu-high";
-    const base = deployment.honeypot_type.replace(/-(low|mid|high)$/, "");
-    const services: TrapService[] = [];
-
-    if (!isHigh) {
-      const key = displayServiceKey(base);
-      const listen =
-        typeof deployment.config.listen === "string"
-          ? deployment.config.listen
-          : null;
-
-      services.push({
-        key,
-        port: parseListenPort(listen) ?? serviceMeta(key).defaultPort,
-      });
-    }
-
-    const raw = eventsByAgent.get(deployment.agent_id) ?? [];
-    const keys = new Set(services.map((service) => service.key));
-    const portByKey = new Map(
-      services.map((service) => [service.key, service.port]),
-    );
-    // для мультисервисного агента события режем по сервису, для high — все
-    const matched = keys.size
-      ? raw.filter((event) => keys.has(displayServiceKey(event.service)))
-      : raw;
-
-    const events: TrapEvent[] = matched.map((event) =>
-      mapEvent(event, {
-        trapId: deployment.id,
-        port: portByKey.get(displayServiceKey(event.service)) ?? 0,
-      }),
-    );
-
+  function mapDeployment(item: DeploymentRead): Trap {
+    const listen = typeof item.config.listen === "string" ? item.config.listen : "";
+    const port = Number(listen.split(":").pop());
+    const agent = agentsStore.agents.find((entry) => entry.agent_id === item.agent_id);
     return {
-      id: deployment.id,
-      name: deployment.name,
-      profileId,
-      description: profile?.description?.trim() || "",
-      services,
-      level: (deployment.level as TrapLevel) || "low",
-      agentId: deployment.agent_id,
-      agentStatus: deriveAgentStatus(deployment, agent),
-      honeypotType: deployment.honeypot_type,
-      driver: deployment.driver,
-      desiredState: deployment.desired_state,
-      observedState: deployment.observed_state,
-      lastError: deployment.last_error,
-      eventsCount: events.length,
-      events,
-      createdAt: deployment.created_at,
+      id: item.id, name: item.name, profileId: item.honeypot_type,
+      description: item.last_error ?? "",
+      services: item.level === "high" ? [] : [{
+        key: item.honeypot_type.replace(/-(low|mid)$/, ""),
+        port: listen.includes(":") && Number.isInteger(port) && port > 0 && port <= 65535 ? port : null,
+      }],
+      level: item.level as TrapLevel,
+      agentId: item.agent_id,
+      agentStatus: agent ? (agent.online ? "online" : "offline") : "unknown",
+      eventsCount: null, events: [], createdAt: item.created_at,
+      desiredState: item.desired_state, observedState: item.observed_state, lastError: item.last_error,
     };
   }
 
-  function rebuild() {
-    traps.value = deploymentsRaw.value
-      .filter((deployment) => deployment.desired_state !== "deleted")
-      .map(mapDeployment);
-  }
-
-  async function load(force = false): Promise<void> {
-    if (loading.value || (!force && loaded)) return;
-
-    loading.value = true;
+  let inflight: Promise<void> | null = null;
+  let generation = 0;
+  watch(() => [auth.user, auth.can("deployments:read"), auth.can("deployments:manage"), auth.can("agents:read")], () => {
+    generation++;
+    // Forced GETs still deduplicate across callers unless the shared cache is cleared.
+    clearCache();
+    inflight = null;
+    traps.value = [];
+    profiles.value = [];
+    pending.value = false;
+    loaded.value = false;
     error.value = null;
+    catalogueError.value = null;
+    actionError.value = null;
+    actionPending.value = null;
+    pendingDeleteId.value = null;
+  }, { flush: "sync" });
 
+  async function loadCatalogue() {
+    const request = generation;
+    profiles.value = [];
+    catalogueError.value = null;
+    if (!auth.can("deployments:read")) {
+      catalogueError.value = "Нет права deployments:read";
+      return;
+    }
     try {
-      const [deployments, agentList, profileList, types, stats] =
-        await Promise.all([
-          resources.deployments.list({ limit: 100 }, { cache: { force } }),
-          resources.agents.list({ cache: { force } }),
-          resources.profiles.list({ cache: { force } }),
-          resources.honeypotTypes.list({ cache: { force } }),
-          resources.events
-            .stats({}, { cache: { force } })
-            .catch(() => null),
-        ]);
-
-      const agentIds = agentList
-        .filter((agent) => agent.enrolled_at)
-        .map((agent) => agent.agent_id);
-
-      const eventLists = await Promise.all(
-        agentIds.map((agentId) =>
-          resources.events
-            .list(
-              { agent_id: agentId, limit: 1000 },
-              { cache: { ttl: 15_000, staleTtl: 60_000, tags: ["events"], force } },
-            )
-            .catch(() => [] as EventRead[]),
-        ),
-      );
-
-      eventsByAgent = new Map();
-      agentIds.forEach((agentId, index) => {
-        eventsByAgent.set(agentId, eventLists[index] ?? []);
-      });
-
-      deploymentsRaw.value = deployments;
-      profiles.value = profileList;
-      agents.value = agentList;
-      catalogSlugs.value = types
-        .map((type) => String(type.slug ?? ""))
-        .filter(Boolean);
-      eventsTotal.value = stats?.total ?? null;
-      rebuild();
-      loaded = true;
+      const items = await resources.honeypotTypes.list({ cache: { force: true, swr: false, persist: false } });
+      if (request !== generation) return;
+      profiles.value = items.filter((item) => typeof item.slug === "string").map((item) => ({
+        id: String(item.slug), name: String(item.name ?? item.slug),
+        description: typeof item.description === "string" ? item.description : String(item.driver ?? ""),
+        icon: "i-lucide-radar", level: item.level as TrapLevel,
+        tags: [String(item.driver ?? "")], services: [],
+        configSchema: item.config_schema as Record<string, unknown> | undefined,
+      }));
     } catch (err) {
-      error.value = toApiError(err).message;
-    } finally {
-      loading.value = false;
+      if (request !== generation) return;
+      profiles.value = [];
+      catalogueError.value = toApiError(err).message;
     }
   }
 
-  /** Свежий список deployments (после мутаций). */
-  async function refreshDeployments(): Promise<void> {
-    const deployments = await resources.deployments.list(
-      { limit: 100 },
-      { cache: { force: true } },
-    );
-
-    deploymentsRaw.value = deployments;
-    rebuild();
-  }
-
-  function upsertDeployment(deployment: DeploymentRead) {
-    const list = [...deploymentsRaw.value];
-    const index = list.findIndex((item) => item.id === deployment.id);
-
-    if (index === -1) list.unshift(deployment);
-    else list[index] = deployment;
-
-    deploymentsRaw.value = list;
-    rebuild();
-  }
-
-  async function runAction(
-    id: string,
-    action: DeploymentAction,
-  ): Promise<DeploymentRead | null> {
+  function load(): Promise<void> {
+    if (inflight) return inflight;
+    fieldVisibility.value = {
+      ...defaultVisibility(),
+      ...readJson<Partial<Record<TrapFieldKey, boolean>>>(FIELDS_KEY, {}),
+    };
+    traps.value = [];
+    error.value = null;
+    loaded.value = false;
     pending.value = true;
-    error.value = null;
-
-    try {
-      const updated = await resources.deployments.action(id, action);
-      upsertDeployment(updated);
-
-      return updated;
-    } catch (err) {
-      error.value = toApiError(err).message;
-      return null;
-    } finally {
-      pending.value = false;
-    }
+    const request = generation;
+    inflight = (async () => {
+      try {
+        await Promise.all([loadCatalogue(), agentsStore.load()]);
+        if (request !== generation) return;
+        if (!auth.can("deployments:read")) {
+          error.value = "Нет права deployments:read";
+          return;
+        }
+        const rows: DeploymentRead[] = [];
+        for (let offset = 0; ; offset += 100) {
+          const page = await resources.deployments.list({ offset, limit: 100 }, { cache: { force: true, swr: false, persist: false } });
+          if (request !== generation) return;
+          rows.push(...page);
+          if (page.length < 100) break;
+        }
+        traps.value = rows.map(mapDeployment);
+        loaded.value = true;
+      } catch (err) {
+        if (request !== generation) return;
+        traps.value = [];
+        error.value = toApiError(err).message;
+      } finally {
+        if (request === generation) {
+          pending.value = false;
+          inflight = null;
+        }
+      }
+    })();
+    return inflight;
   }
 
-  /** Создание: low/medium — по одному deployment на сервис, high — одна VM. */
-  async function createTraps(input: CreateTrapInput): Promise<Trap[]> {
-    const name = input.name.trim();
-    const payloads: DeploymentCreate[] = [];
-
-    if (input.level === "high") {
-      payloads.push({
-        name,
-        agent_id: input.agentId,
-        honeypot_type: "qemu-high",
-        config: { image: input.image },
-      });
-    } else {
-      const many = input.services.length > 1;
-
-      for (const service of input.services) {
-        const slug = catalogTypeFor(service.key, input.level);
-        if (!slug) continue;
-
-        payloads.push({
-          name: many
-            ? `${name}-${serviceMeta(service.key).short.toLowerCase()}`
-            : name,
-          agent_id: input.agentId,
-          honeypot_type: slug,
-          config: { listen: `:${service.port}` },
-        });
-      }
-    }
-
-    if (!payloads.length) return [];
-
-    pending.value = true;
-    error.value = null;
-
-    const created: DeploymentRead[] = [];
-
-    try {
-      for (const payload of payloads) {
-        created.push(await resources.deployments.create(payload));
-      }
-
-      if (created.length) {
-        const ids = new Set(created.map((item) => item.id));
-
-        deploymentsRaw.value = [
-          ...created,
-          ...deploymentsRaw.value.filter((item) => !ids.has(item.id)),
-        ];
-        rebuild();
-      }
-
-      return created
-        .map((item) => traps.value.find((trap) => trap.id === item.id))
-        .filter((trap): trap is Trap => Boolean(trap));
-    } catch (err) {
-      error.value = toApiError(err).message;
-      return [];
-    } finally {
-      pending.value = false;
-    }
-  }
-
-  async function loadQemuImages(force = false): Promise<void> {
-    try {
-      qemuImages.value = await resources.qemuImages.list({
-        cache: { force },
-      });
-    } catch {
-      qemuImages.value = [];
-    }
-  }
-
-  function isServiceAvailable(key: ServiceKey, level: TrapLevel = "medium") {
-    if (level === "high") return hasQemuImageType.value;
-
-    const slug = catalogTypeFor(key, level);
-
-    return Boolean(slug && catalogSlugs.value.includes(slug));
+  function persist() {
+    writeJson(FIELDS_KEY, fieldVisibility.value);
   }
 
   function getTrap(id: string | null) {
@@ -555,7 +472,57 @@ export const useTrapsStore = defineStore("traps", () => {
     serviceVisibility.value[key] = !serviceVisibility.value[key];
   }
 
+  async function createTrap(input: CreateTrapInput) {
+    if (!canManage.value) {
+      actionError.value = "Нужны права deployments:read и deployments:manage";
+      return null;
+    }
+    if (actionPending.value) return null;
+    const request = generation;
+    actionPending.value = "create";
+    actionError.value = null;
+    try {
+      const row = await resources.deployments.create(input);
+      if (request !== generation) return null;
+      const created = mapDeployment(row);
+      traps.value = [created, ...traps.value];
+      return created;
+    } catch (err) {
+      if (request !== generation) return null;
+      actionError.value = toApiError(err).message;
+      return null;
+    } finally {
+      if (request === generation) actionPending.value = null;
+    }
+  }
+
+  async function runAction(id: string, action: DeploymentAction) {
+    if (!canManage.value) {
+      actionError.value = "Нужны права deployments:read и deployments:manage";
+      return null;
+    }
+    if (actionPending.value) return null;
+    const request = generation;
+    actionPending.value = id;
+    actionError.value = null;
+    try {
+      const row = await resources.deployments.action(id, action);
+      if (request !== generation) return null;
+      const updated = mapDeployment(row);
+      traps.value = traps.value.map((trap) => trap.id === id ? updated : trap);
+      return updated;
+    } catch (err) {
+      if (request !== generation) return null;
+      actionError.value = toApiError(err).message;
+      return null;
+    } finally {
+      if (request === generation) actionPending.value = null;
+    }
+  }
+
   function requestDelete(id: string) {
+    if (!canManage.value) return;
+    actionError.value = null;
     pendingDeleteId.value = id;
   }
 
@@ -563,19 +530,14 @@ export const useTrapsStore = defineStore("traps", () => {
     pendingDeleteId.value = null;
   }
 
-  /** DESTROY на backend: при успехе ловушка исчезает из списка. */
-  async function confirmDelete(): Promise<Trap | null> {
-    const id = pendingDeleteId.value;
-    if (!id) return null;
+  async function confirmDelete() {
+    if (!pendingDeleteId.value) return null;
 
-    const removed = getTrap(id);
-    const result = await runAction(id, "destroy");
-
-    if (!result) return null;
-
-    pendingDeleteId.value = null;
-
-    return removed;
+    const request = generation;
+    const updated = await runAction(pendingDeleteId.value, "destroy");
+    if (request !== generation) return null;
+    if (updated) pendingDeleteId.value = null;
+    return updated;
   }
 
   function persist() {
@@ -594,12 +556,15 @@ export const useTrapsStore = defineStore("traps", () => {
   return {
     traps,
     profiles,
-    agents,
-    catalogSlugs,
-    qemuImages,
-    loading,
     pending,
+    loaded,
     error,
+    catalogueError,
+    actionError,
+    actionPending,
+    canManage,
+    loadCatalogue,
+    runAction,
     fieldVisibility,
     serviceVisibility,
     search,
@@ -638,6 +603,7 @@ export const useTrapsStore = defineStore("traps", () => {
     resetFields,
     setServiceVisibility,
     toggleServiceVisibility,
+    createTrap,
     requestDelete,
     cancelDelete,
     confirmDelete,

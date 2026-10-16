@@ -1,21 +1,6 @@
 import { defineStore } from "pinia";
-import type { AnalyticsOverview, EventRead } from "~/types/api";
-import { resources } from "~/api/resources";
-import { toApiError } from "~/api/errors";
-import type {
-  ServiceKey,
-  Trap,
-  TrapEvent,
-  TrapEventAction,
-  TrapEventSeverity,
-} from "~/types/traps";
-import {
-  actionLabel,
-  findTrapForEvent,
-  mapEvent,
-  serviceMeta,
-} from "~/utils/traps";
-import { useTrapsStore } from "~/stores/traps";
+import type { EventRead } from "~/types/api";
+import { useEventsStore } from "~/stores/events";
 
 export type AnalyticsPeriod = "24h" | "7d" | "30d" | "all";
 export type AnalyticsSortKey =
@@ -24,11 +9,15 @@ export type AnalyticsSortKey =
   | "service"
   | "action"
   | "severity"
-  | "trap";
+  | "agent";
 export type AnalyticsSortDirection = "asc" | "desc";
 
-export interface AnalyticsEvent extends TrapEvent {
-  trapName: string;
+export interface AnalyticsEvent extends EventRead {
+  source: string;
+  action: string;
+  message: string;
+  port: number | null;
+  severity: string;
 }
 
 export interface AnalyticsSort {
@@ -43,16 +32,11 @@ export const PERIODS: { key: AnalyticsPeriod; label: string; ms: number | null }
   { key: "all", label: "Всё время", ms: null },
 ];
 
-/** Размер серверной страницы журнала (GET /events?limit&offset). */
-export const JOURNAL_PAGE_SIZE = 25;
-/** Окно событий для графиков (timeline/ловушки/критичные). */
-const WINDOW_LIMIT = 1000;
-
-function severityWeight(severity: TrapEventSeverity) {
+function severityWeight(severity: string) {
   if (severity === "critical") return 3;
   if (severity === "warning") return 2;
 
-  return 1;
+  return severity === "info" ? 1 : 0;
 }
 
 function compare(
@@ -71,8 +55,8 @@ function compare(
       return a.action.localeCompare(b.action);
     case "severity":
       return severityWeight(a.severity) - severityWeight(b.severity);
-    case "trap":
-      return a.trapName.localeCompare(b.trapName, "ru");
+    case "agent":
+      return a.agent_id.localeCompare(b.agent_id);
     default:
       return 0;
   }
@@ -85,181 +69,45 @@ function isExactIp(value: string) {
 }
 
 export const useAnalyticsStore = defineStore("analytics", () => {
-  const traps = useTrapsStore();
+  const events = useEventsStore();
 
-  const trapId = ref<string | null>(null);
+  const agentId = ref<string | null>(null);
   const period = ref<AnalyticsPeriod>("7d");
   const search = ref("");
-  const serviceFilter = ref<ServiceKey | "all">("all");
-  const actionFilter = ref<TrapEventAction | "all">("all");
-  const severityFilter = ref<TrapEventSeverity | "all">("all");
+  const serviceFilter = ref("all");
+  const actionFilter = ref("all");
+  const severityFilter = ref("all");
   const sort = ref<AnalyticsSort>({ field: "ts", direction: "desc" });
 
-  const page = ref(1);
-  const loading = ref(false);
-  const error = ref<string | null>(null);
+  const baseEvents = computed<AnalyticsEvent[]>(() => events.events.map((event) => ({
+    ...event,
+    source: event.src ?? "",
+    action: event.event,
+    message: event.data ? JSON.stringify(event.data) : "",
+    port: event.destination_port ?? null,
+    // level describes honeypot interaction, not event severity.
+    severity: event.severity ?? "unknown",
+  })));
 
-  const overview = ref<AnalyticsOverview | null>(null);
-  /** Окно событий (≤1000) — timeline, критичные, ловушки. */
-  const windowEvents = ref<AnalyticsEvent[]>([]);
-  /** Текущая серверная страница журнала. */
-  const journalRows = ref<AnalyticsEvent[]>([]);
-  /** Всего строк по фильтрам сервера (из /analytics/overview). */
-  const journalTotal = ref(0);
+  const scopedEvents = computed<AnalyticsEvent[]>(() => {
+    const id = agentId.value;
 
-  /** Серверные параметры: период/сервис/действие/ловушка/источник(IP). */
-  const serverQuery = computed(() => {
-    const query: {
-      since?: string;
-      agent_id?: string;
-      src?: string;
-      event?: string;
-      service?: string;
-      limit?: number;
-      offset?: number;
-    } = {};
+    if (!id) return baseEvents.value;
 
+    return baseEvents.value.filter((event) => event.agent_id === id);
+  });
+
+  const periodEvents = computed<AnalyticsEvent[]>(() => {
     const spec = PERIODS.find((item) => item.key === period.value);
-    if (spec?.ms) query.since = new Date(Date.now() - spec.ms).toISOString();
 
-    if (serviceFilter.value !== "all") query.service = serviceFilter.value;
-    if (actionFilter.value !== "all") query.event = actionFilter.value;
+    if (!spec?.ms) return scopedEvents.value;
 
-    const trap = trapId.value ? traps.getTrap(trapId.value) : null;
-    if (trap) {
-      query.agent_id = trap.agentId;
+    const cutoff = Date.now() - spec.ms;
 
-      // узкая ловушка (один сервис) — уточняем агрегаты по сервису,
-      // чтобы total журнала совпадал с числом строк ловушки
-      const trapService = trap.services[0];
-      if (trapService && serviceFilter.value === "all") {
-        query.service = trapService.key;
-      }
-    }
-
-    // Свободный текст ищем по строкам, точный IP — фильтром src на сервере.
-    const query0 = search.value.trim();
-    if (query0 && isExactIp(query0)) query.src = query0;
-
-    return query;
+    return scopedEvents.value.filter((event) => Date.parse(event.ts) >= cutoff);
   });
 
-  function attach(rows: EventRead[]): AnalyticsEvent[] {
-    const list: AnalyticsEvent[] = [];
-
-    for (const row of rows) {
-      const trap = findTrapForEvent(
-        traps.traps,
-        row.agent_id,
-        row.service,
-      );
-
-      if (trapId.value && trap?.id !== trapId.value) continue;
-
-      const name = trap
-        ? trap.name || traps.profilesById[trap.profileId]?.name || trap.id
-        : row.agent_id;
-
-      list.push({
-        ...mapEvent(row, {
-          trapId: trap?.id ?? "",
-          port: trap?.services[0]?.port ?? 0,
-        }),
-        trapId: trap?.id ?? "",
-        trapName: name,
-      });
-    }
-
-    return list;
-  }
-
-  async function fetchOverview(force = false) {
-    const data = await resources.analytics.overview(serverQuery.value, {
-      cache: { force },
-    });
-
-    overview.value = data;
-    journalTotal.value = data.total;
-  }
-
-  async function fetchWindow(force = false) {
-    const rows = await resources.events.list(
-      { ...serverQuery.value, limit: WINDOW_LIMIT },
-      { cache: { ttl: 15_000, staleTtl: 60_000, tags: ["events"], force } },
-    );
-
-    windowEvents.value = attach(rows);
-  }
-
-  async function fetchJournal(force = false) {
-    const rows = await resources.events.list(
-      {
-        ...serverQuery.value,
-        limit: JOURNAL_PAGE_SIZE,
-        offset: (page.value - 1) * JOURNAL_PAGE_SIZE,
-      },
-      { cache: { ttl: 15_000, staleTtl: 60_000, tags: ["events"], force } },
-    );
-
-    journalRows.value = attach(rows);
-  }
-
-  async function load(force = false): Promise<void> {
-    loading.value = true;
-    error.value = null;
-
-    try {
-      await Promise.all([
-        fetchOverview(force),
-        fetchWindow(force),
-        fetchJournal(force),
-      ]);
-    } catch (err) {
-      error.value = toApiError(err).message;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  /** Смена серверной страницы журнала. */
-  async function setPage(value: number): Promise<void> {
-    if (value < 1 || value === page.value) return;
-
-    page.value = value;
-    loading.value = true;
-
-    try {
-      await fetchJournal(true);
-    } catch (err) {
-      error.value = toApiError(err).message;
-    } finally {
-      loading.value = false;
-    }
-  }
-
-  function resetPageAndLoad() {
-    page.value = 1;
-    void load(true);
-  }
-
-  // Серверные фильтры → перезапрос агрегатов и журнала.
-  watch(
-    [period, serviceFilter, actionFilter, trapId],
-    () => resetPageAndLoad(),
-  );
-
-  // Поиск: точный IP меняет src-параметр сервера; иначе только клиентская
-  // доработка строк — перезапрос не нужен (кроме сброса после IP).
-  let searchWasIp = isExactIp(search.value);
-  watch(search, (value) => {
-    const ip = isExactIp(value);
-
-    if (ip || searchWasIp) resetPageAndLoad();
-    searchWasIp = ip;
-  });
-
-  /** Клиентские доработки поверх серверной страницы журнала. */
-  const journalSorted = computed(() => {
+  const filteredEvents = computed<AnalyticsEvent[]>(() => {
     const query = search.value.trim().toLowerCase();
     const severity = severityFilter.value;
 
@@ -272,7 +120,7 @@ export const useAnalyticsStore = defineStore("analytics", () => {
         event.message,
         event.action,
         event.service,
-        event.trapName,
+        event.agent_id,
         String(event.port),
       ]
         .join(" ")
@@ -319,38 +167,23 @@ export const useAnalyticsStore = defineStore("analytics", () => {
     );
   });
 
-  const activeTrap = computed<Trap | null>(() =>
-    trapId.value ? traps.getTrap(trapId.value) : null,
-  );
-
-  const total = computed(() => overview.value?.total ?? 0);
   const uniqueAttackers = computed(
-    () => overview.value?.unique_sources ?? 0,
+    () => new Set(filteredEvents.value.map((event) => event.src).filter(Boolean)).size,
   );
 
   const criticalCount = computed(
-    () => windowEvents.value.filter((event) => event.severity === "critical")
-      .length,
+    () => filteredEvents.value.filter((event) => event.severity === "critical").length,
   );
 
-  const involvedTraps = computed(
-    () =>
-      new Set(
-        windowEvents.value
-          .map((event) => event.trapId)
-          .filter(Boolean),
-      ).size,
+  const involvedAgents = computed(
+    () => new Set(filteredEvents.value.map((event) => event.agent_id)).size,
   );
 
   const severityStats = computed(() => {
-    const counts: Record<TrapEventSeverity, number> = {
-      info: 0,
-      warning: 0,
-      critical: 0,
-    };
+    const counts: Record<string, number> = Object.create(null);
 
-    for (const event of windowEvents.value) {
-      counts[event.severity]++;
+    for (const event of filteredEvents.value) {
+      counts[event.severity] = (counts[event.severity] ?? 0) + 1;
     }
 
     return counts;
@@ -407,12 +240,24 @@ export const useAnalyticsStore = defineStore("analytics", () => {
       .sort((a, b) => b.count - a.count);
   }
 
-  const trapStats = computed(() =>
-    groupCount(windowEvents.value, (event) => event.trapName),
+  const serviceStats = computed(() =>
+    groupCount(filteredEvents.value, (event) => event.service),
+  );
+
+  const actionStats = computed(() =>
+    groupCount(filteredEvents.value, (event) => event.action),
+  );
+
+  const topAttackers = computed(() =>
+    groupCount(filteredEvents.value.filter((event) => event.src), (event) => event.source).slice(0, 10),
+  );
+
+  const agentStats = computed(() =>
+    groupCount(filteredEvents.value, (event) => event.agent_id),
   );
 
   const timeline = computed(() => {
-    const events = windowEvents.value;
+    const events = filteredEvents.value.filter((event) => Number.isFinite(Date.parse(event.ts)));
     const buckets = new Map<string, number>();
 
     const hourly = period.value === "24h";
@@ -421,11 +266,17 @@ export const useAnalyticsStore = defineStore("analytics", () => {
       (a, b) => Date.parse(a.ts) - Date.parse(b.ts),
     );
 
-    const anchor = sorted.length
-      ? new Date(sorted[sorted.length - 1]!.ts)
-      : new Date();
+    const anchor = new Date();
 
-    const bucketCount = hourly ? 24 : 21;
+    // Include the partial first hour/day of the rolling period.
+    const bucketCount = hourly ? 25 : period.value === "7d" ? 8 : period.value === "30d" ? 31 : 0;
+
+    if (period.value === "all") {
+      for (const event of sorted) {
+        const date = new Date(event.ts);
+        buckets.set(`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`, 0);
+      }
+    }
 
     for (let i = bucketCount - 1; i >= 0; i--) {
       const date = new Date(anchor);
@@ -477,15 +328,12 @@ export const useAnalyticsStore = defineStore("analytics", () => {
     };
   });
 
-  const trapOptions = computed(() =>
-    traps.traps.map((trap) => ({
-      label: trap.name || trap.id,
-      value: trap.id,
-    })),
+  const agentOptions = computed(() =>
+    [...new Set(baseEvents.value.map((event) => event.agent_id))].map((id) => ({ label: id, value: id })),
   );
 
-  function setTrap(id: string | null) {
-    trapId.value = id;
+  function setAgent(id: string | null) {
+    agentId.value = id;
   }
 
   function setPeriod(value: AnalyticsPeriod) {
@@ -496,15 +344,15 @@ export const useAnalyticsStore = defineStore("analytics", () => {
     search.value = value;
   }
 
-  function setServiceFilter(value: ServiceKey | "all") {
+  function setServiceFilter(value: string) {
     serviceFilter.value = value;
   }
 
-  function setActionFilter(value: TrapEventAction | "all") {
+  function setActionFilter(value: string) {
     actionFilter.value = value;
   }
 
-  function setSeverityFilter(value: TrapEventSeverity | "all") {
+  function setSeverityFilter(value: string) {
     severityFilter.value = value;
   }
 
@@ -524,7 +372,7 @@ export const useAnalyticsStore = defineStore("analytics", () => {
   }
 
   function reset() {
-    trapId.value = null;
+    agentId.value = null;
     period.value = "7d";
     search.value = "";
     serviceFilter.value = "all";
@@ -536,39 +384,31 @@ export const useAnalyticsStore = defineStore("analytics", () => {
   }
 
   return {
-    trapId,
+    agentId,
     period,
     search,
     serviceFilter,
     actionFilter,
     severityFilter,
     sort,
-    page,
-    loading,
-    error,
-    overview,
-    windowEvents,
-    journalRows,
-    journalSorted,
-    journalTotal,
-    exportEvents,
-    total,
+    baseEvents,
+    scopedEvents,
+    periodEvents,
+    filteredEvents,
+    sortedEvents,
     uniqueAttackers,
     criticalCount,
-    involvedTraps,
+    involvedAgents,
     severityStats,
     serviceStats,
     actionStats,
     serviceOptions,
     actionOptions,
     topAttackers,
-    trapStats,
+    agentStats,
     timeline,
-    activeTrap,
-    trapOptions,
-    load,
-    setPage,
-    setTrap,
+    agentOptions,
+    setAgent,
     setPeriod,
     setSearch,
     setServiceFilter,

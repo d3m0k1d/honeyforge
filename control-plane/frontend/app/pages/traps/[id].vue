@@ -1,18 +1,16 @@
 <script setup lang="ts">
-definePageMeta({ permission: "honeypots:read" });
+definePageMeta({ permission: "deployments:read" });
 
-import type { Trap } from "~/types/traps";
+import type { DeploymentTrap as Trap, ServiceKey } from "~/types/traps";
 import {
-  AGENT_STATUS_BY_KEY,
+  AGENT_STATUSES,
   LEVEL_BY_KEY,
+  SERVICE_BY_KEY,
   formatDateTime,
-  formatEvents,
-  profileIconFor,
-  serviceMeta,
-  stateLabel,
 } from "~/utils/traps";
 
 const store = useTrapsStore();
+const agents = useAgentsStore();
 const route = useRoute();
 const toast = useToast();
 const auth = useAuthStore();
@@ -29,11 +27,11 @@ const deleteOpen = computed({
   },
 });
 
-const profile = computed(() =>
-  trap.value ? (store.profilesById[trap.value.profileId] ?? null) : null,
+const profile = computed(
+  () => store.profiles.find((item) => item.id === trap.value?.profileId) ?? null,
 );
 const agent = computed(() =>
-  trap.value ? (store.agentsById[trap.value.agentId] ?? null) : null,
+  trap.value ? agents.agents.find((item) => item.agent_id === trap.value!.agentId) ?? null : null,
 );
 const level = computed(() =>
   trap.value ? (LEVEL_BY_KEY[trap.value.level] ?? LEVEL_BY_KEY.low) : null,
@@ -69,91 +67,39 @@ onMounted(() => {
 });
 
 async function toggleStatus() {
-  if (!trap.value || store.pending) return;
+  if (!trap.value) return;
 
-  const target = trap.value;
-  const starting = target.desiredState !== "running";
-  const updated = await store.runAction(
-    target.id,
-    starting ? "start" : "stop",
-  );
+  const next = trap.value.desiredState === "running" ? "stop" : "start";
+  const updated = await store.runAction(trap.value.id, next);
+  if (!updated) return;
 
-  if (updated) {
-    toast.add({
-      title: starting
-        ? `Ловушка ${target.name}: запуск`
-        : `Ловушка ${target.name}: остановка`,
-      description: "Команда поставлена в очередь агенту",
-      color: starting ? "success" : "warning",
-      icon: starting ? "i-lucide-play" : "i-lucide-circle-parking",
-    });
-    return;
-  }
+  toast.add({
+    title: `Команда ${next} принята`,
+    color: "success",
+  });
+}
 
-  if (store.error) {
-    toast.add({
-      title: "Команда не выполнена",
-      description: store.error,
-      color: "error",
-      icon: "i-lucide-triangle-alert",
-    });
+async function confirmDestroy() {
+  if (await store.confirmDelete()) {
+    toast.add({ title: "Команда destroy принята", color: "success" });
   }
 }
 
-async function resync() {
-  if (!trap.value || store.pending) return;
-
-  const target = trap.value;
-  const updated = await store.runAction(target.id, "reconcile");
-
-  if (updated) {
-    toast.add({
-      title: `Ловушка ${target.name}: пересинхронизация`,
-      description: "Команда reconcile поставлена в очередь",
-      color: "success",
-      icon: "i-lucide-refresh-cw",
-    });
-    return;
-  }
-
-  if (store.error) {
-    toast.add({
-      title: "Команда не выполнена",
-      description: store.error,
-      color: "error",
-      icon: "i-lucide-triangle-alert",
-    });
-  }
-}
-
-async function confirmDelete() {
-  const removed = await store.confirmDelete();
-
-  deleteOpen.value = false;
-
-  if (removed) {
-    toast.add({
-      title: `Ловушка ${removed.name} удалена`,
-      color: "success",
-      icon: "i-lucide-trash-2",
-    });
-    navigateTo("/traps");
-    return;
-  }
-
-  if (store.error) {
-    toast.add({
-      title: "Не удалось удалить ловушку",
-      description: store.error,
-      color: "error",
-      icon: "i-lucide-triangle-alert",
-    });
-  }
+function serviceInfo(key: string) {
+  return SERVICE_BY_KEY[key as ServiceKey];
 }
 </script>
 
 <template>
-  <div v-if="trap" class="flex flex-col gap-5">
+  <div v-if="store.pending || store.error" class="space-y-3 py-8">
+    <p v-if="store.pending" role="status" class="text-sm text-muted">Загрузка ловушки…</p>
+    <UAlert v-if="store.error" color="error" :description="store.error" />
+    <UButton v-if="store.error" label="Повторить" :loading="store.pending" @click="store.load()" />
+  </div>
+  <div v-else-if="trap" class="flex flex-col gap-5">
+    <UAlert v-if="store.actionError" color="error" :description="store.actionError" />
+    <UAlert v-if="agents.error" color="warning" :description="agents.error" />
+    <UButton label="Обновить состояние" variant="outline" class="self-start" @click="store.load()" />
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0">
         <UButton
@@ -170,7 +116,7 @@ async function confirmDelete() {
           <div
             class="flex size-11 shrink-0 items-center justify-center rounded-lg border border-default bg-elevated"
           >
-            <UIcon :name="trapIcon" class="size-5 text-primary" />
+            <UIcon :name="profile?.icon ?? 'i-lucide-radar'" class="size-5 text-primary" />
           </div>
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
@@ -191,7 +137,7 @@ async function confirmDelete() {
                   class="size-1.5 rounded-full"
                   :class="status?.dot"
                 />
-                <span class="text-toned">{{ status?.label }}</span>
+                <span class="text-toned">{{ status?.label ?? 'Статус агента неизвестен' }}</span>
               </span>
             </div>
             <p class="font-mono text-[10px] text-dimmed">
@@ -203,16 +149,19 @@ async function confirmDelete() {
 
       <div v-if="canManage" class="flex flex-wrap gap-2">
         <UButton
+          v-if="store.canManage"
           class="cursor-pointer"
           color="neutral"
           variant="outline"
           size="sm"
-          :icon="isRunning ? 'i-lucide-circle-parking' : 'i-lucide-play'"
-          :label="isRunning ? 'Остановить' : 'Запустить'"
-          :loading="store.pending"
+          :icon="trap.desiredState === 'running' ? 'i-lucide-circle-parking' : 'i-lucide-play'"
+          :label="trap.desiredState === 'running' ? 'Остановить' : 'Запустить'"
+          :loading="store.actionPending === trap.id"
+          :disabled="Boolean(store.actionPending) || trap.desiredState === 'deleted'"
           @click="toggleStatus"
         />
         <UButton
+          v-if="store.canManage"
           class="cursor-pointer"
           color="neutral"
           variant="outline"
@@ -228,7 +177,8 @@ async function confirmDelete() {
           variant="outline"
           size="sm"
           icon="i-lucide-trash-2"
-          label="Удалить"
+          label="Уничтожить"
+          :disabled="Boolean(store.actionPending) || trap.desiredState === 'deleted'"
           @click="store.requestDelete(trap.id)"
         />
       </div>
@@ -290,17 +240,17 @@ async function confirmDelete() {
           <div class="flex items-start justify-between gap-2">
             <dt class="text-muted">Порты</dt>
             <dd class="text-right font-mono text-highlighted">
-              {{ trap.services.map((service) => service.port).join(", ") || "—" }}
+              {{ trap.services.map((service) => service.port ?? '—').join(", ") || '—' }}
             </dd>
           </div>
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">Агент</dt>
-            <dd class="font-mono text-highlighted">{{ trap.agentId }}</dd>
+            <dd class="text-highlighted">{{ trap.agentId }}</dd>
           </div>
           <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">События</dt>
+            <dt class="text-muted">Состояние / желаемое</dt>
             <dd class="font-mono text-primary tabular-nums">
-              {{ formatEvents(trap.eventsCount) }}
+              {{ trap.observedState }} / {{ trap.desiredState }}
             </dd>
           </div>
         </dl>
@@ -326,52 +276,41 @@ async function confirmDelete() {
             class="size-2 rounded-full"
             :class="status?.dot ?? 'bg-dimmed'"
           />
-          <div class="min-w-0">
-            <p class="truncate text-sm font-medium text-highlighted">
-              {{ agent?.agent_id ?? trap.agentId }}
+          <div>
+            <p class="text-sm font-medium text-highlighted">
+              {{ trap.agentId }}
             </p>
-            <p class="font-mono text-[10px] text-dimmed">
-              {{ agent?.online ? "online" : agent ? "offline" : "не найден" }}
-            </p>
+            <p class="font-mono text-[10px] text-dimmed">{{ agent?.profile_name ?? agent?.profile_id ?? '—' }}</p>
           </div>
         </div>
 
         <dl class="mt-4 space-y-2.5 text-xs">
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">Статус</dt>
-            <dd class="text-highlighted">{{ status?.label }}</dd>
-          </div>
-          <div class="flex items-start justify-between gap-2">
-            <dt class="text-muted">Heartbeat</dt>
-            <dd class="text-right font-mono text-highlighted">
-              {{ agent?.last_heartbeat_at ? formatDateTime(agent.last_heartbeat_at) : "—" }}
-            </dd>
-          </div>
-          <div class="flex items-start justify-between gap-2">
-            <dt class="text-muted">Enroll</dt>
-            <dd class="text-right font-mono text-highlighted">
-              {{ agent?.enrolled_at ? formatDateTime(agent.enrolled_at) : "—" }}
-            </dd>
+            <dd class="text-highlighted">{{ status?.label ?? 'Неизвестно' }}</dd>
           </div>
           <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">Профиль агента</dt>
-            <dd class="text-highlighted">
-              {{ agent?.profile_name ?? "—" }}
-            </dd>
+            <dt class="text-muted">Регистрация</dt>
+            <dd class="font-mono text-highlighted">{{ agent?.enrolled_at ? formatDateTime(agent.enrolled_at) : "—" }}</dd>
+          </div>
+          <div class="flex items-center justify-between gap-2">
+            <dt class="text-muted">Последний heartbeat</dt>
+            <dd class="font-mono text-highlighted">{{ agent?.last_heartbeat_at ? formatDateTime(agent.last_heartbeat_at) : "—" }}</dd>
           </div>
         </dl>
 
         <UButton
-          v-if="canManage"
+          v-if="store.canManage"
           class="mt-4 cursor-pointer"
           color="neutral"
           variant="outline"
           size="sm"
           block
           icon="i-lucide-refresh-cw"
-          label="Пересинхронизировать"
-          :loading="store.pending"
-          @click="resync"
+          label="Reconcile"
+          :loading="store.actionPending === trap.id"
+          :disabled="Boolean(store.actionPending) || trap.desiredState === 'deleted'"
+          @click="store.runAction(trap.id, 'reconcile')"
         />
       </UCard>
 
@@ -390,14 +329,14 @@ async function confirmDelete() {
             class="flex items-center gap-3 rounded-md border border-default px-3 py-2"
           >
             <UIcon
-              :name="serviceMeta(service.key).icon"
+              :name="serviceInfo(service.key)?.icon ?? 'i-lucide-plug'"
               class="size-4 text-dimmed"
             />
             <span class="text-sm text-highlighted">
-              {{ serviceMeta(service.key).label }}
+              {{ serviceInfo(service.key)?.label ?? service.key }}
             </span>
             <span class="ml-auto font-mono text-xs text-toned tabular-nums">
-              :{{ service.port }}
+              {{ service.port === null ? '—' : `:${service.port}` }}
             </span>
           </div>
         </div>
@@ -406,8 +345,7 @@ async function confirmDelete() {
           v-else
           class="py-6 text-center text-xs text-dimmed"
         >
-          <p>Виртуальная машина (QEMU)</p>
-          <p class="mt-1 font-mono">{{ trap.honeypotType }}</p>
+          Сервисы listen не представлены для этого типа развёртывания
         </div>
       </UCard>
 
@@ -421,7 +359,7 @@ async function confirmDelete() {
               </h2>
             </div>
             <span class="font-mono text-[11px] text-muted">
-              всего {{ trap.eventsCount.toLocaleString("ru-RU") }}
+              Недоступно для отдельного развёртывания
             </span>
           </div>
         </template>
@@ -449,11 +387,8 @@ async function confirmDelete() {
             </span>
           </div>
 
-          <div
-            v-if="!trap.events.length"
-            class="px-3 py-8 text-center text-xs text-dimmed"
-          >
-            Событий пока нет — ловушка только что создана
+          <div v-if="!trap.events.length" class="px-3 py-8 text-center text-xs text-dimmed">
+            API не связывает события агента с отдельным развёртыванием. Общий журнал доступен в аналитике.
           </div>
         </div>
       </UCard>
@@ -461,10 +396,14 @@ async function confirmDelete() {
 
     <UModal
       v-model:open="deleteOpen"
-      title="Удалить ловушку?"
-      description="Действие необратимо"
+      title="Уничтожить ловушку?"
+      description="API поставит команду destroy в очередь. Запись развёртывания сохранится."
       :ui="{ content: 'max-w-md' }"
     >
+      <template #body>
+        <UAlert v-if="store.actionError" color="error" :description="store.actionError" />
+        <p v-else class="text-sm text-muted">{{ trap.name }}</p>
+      </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton
@@ -478,16 +417,17 @@ async function confirmDelete() {
             class="cursor-pointer"
             color="error"
             icon="i-lucide-trash-2"
-            label="Удалить"
-            :loading="store.pending"
-            @click="confirmDelete"
+            label="Уничтожить"
+            :loading="Boolean(store.actionPending)"
+            :disabled="!store.canManage || Boolean(store.actionPending)"
+            @click="confirmDestroy"
           />
         </div>
       </template>
     </UModal>
   </div>
 
-  <div v-else class="flex flex-col items-center gap-4 py-20 text-center">
+  <div v-else-if="store.loaded" class="flex flex-col items-center gap-4 py-20 text-center">
     <div
       class="flex size-12 items-center justify-center rounded-lg border border-default bg-elevated"
     >

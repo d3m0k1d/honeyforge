@@ -9,18 +9,30 @@ const AXIS = "#94a3b8";
 const auth = useAuthStore();
 const settings = useSettingsStore();
 const trapsStore = useTrapsStore();
-const analytics = useAnalyticsStore();
+const agentsStore = useAgentsStore();
+const eventsStore = useEventsStore();
 
 // туманность/липкий герой — только для радиального режима навигации;
 // при обычной навигации главный экран рендерится «по-простому»
 const fogMode = computed(() => settings.navMode === "radial");
 
+const activity = computed(() => {
+  const buckets = new Map<number, number>();
+  for (const event of eventsStore.events) {
+    const timestamp = Date.parse(event.ts);
+    if (!Number.isFinite(timestamp)) continue;
+    const minute = Math.floor(timestamp / 60_000) * 60_000;
+    buckets.set(minute, (buckets.get(minute) ?? 0) + 1);
+  }
+  return [...buckets.entries()].sort(([a], [b]) => a - b);
+});
+
 const lineData = computed<ChartData<"line">>(() => ({
-  labels: analytics.timeline.labels,
+  labels: activity.value.map(([timestamp]) => formatDateTime(new Date(timestamp).toISOString())),
   datasets: [
     {
       label: "События",
-      data: analytics.timeline.values,
+      data: activity.value.map(([, count]) => count),
       borderColor: "#10b981",
       backgroundColor: "rgba(16, 185, 129, 0.15)",
       fill: true,
@@ -32,30 +44,29 @@ const lineData = computed<ChartData<"line">>(() => ({
   ],
 }));
 
-const DONUT_COLORS = ["#10b981", "#38bdf8", "#f59e0b", "#f43f5e", "#8b5cf6"];
+const vectors = computed(() => eventsStore.stats?.by_event ?? {});
 
 const donutData = computed<ChartData<"doughnut">>(() => ({
-  labels: analytics.actionStats.map((item) => actionLabel(item.label)),
+  labels: Object.keys(vectors.value),
   datasets: [
     {
-      data: analytics.actionStats.map((item) => item.count),
-      backgroundColor: analytics.actionStats.map(
-        (_, index) => DONUT_COLORS[index % DONUT_COLORS.length],
-      ),
+      data: Object.values(vectors.value),
+      backgroundColor: ["#10b981", "#38bdf8", "#f59e0b", "#f43f5e"],
       borderWidth: 0,
       hoverOffset: 6,
     },
   ],
 }));
 
-const topServices = computed(() => analytics.serviceStats.slice(0, 5));
+const services = computed(() => Object.entries(eventsStore.stats?.by_service ?? {})
+  .sort(([, a], [, b]) => b - a).slice(0, 5));
 
 const barData = computed<ChartData<"bar">>(() => ({
-  labels: topServices.value.map((item) => item.label),
+  labels: services.value.map(([service]) => service),
   datasets: [
     {
       label: "Попадания",
-      data: topServices.value.map((item) => item.count),
+      data: services.value.map(([, count]) => count),
       backgroundColor: "rgba(16, 185, 129, 0.35)",
       borderColor: "#10b981",
       borderWidth: 1,
@@ -98,14 +109,27 @@ const barOptions: ChartOptions<"bar"> = {
   },
 };
 
-onMounted(async () => {
-  settings.load();
+let timer: ReturnType<typeof setInterval> | undefined;
 
+async function refresh() {
   if (!auth.isAuthenticated) return;
+  await Promise.all([
+    auth.can("deployments:read") ? trapsStore.load() : Promise.resolve(),
+    auth.can("agents:read") ? agentsStore.load() : Promise.resolve(),
+    auth.can("events:read") ? eventsStore.load() : Promise.resolve(),
+  ]);
+}
 
-  await trapsStore.load();
-  await analytics.load();
+onMounted(() => {
+  settings.load();
+  void refresh();
+  timer = setInterval(() => {
+    if (!document.hidden) void refresh();
+  }, 5000);
 });
+
+onBeforeUnmount(() => clearInterval(timer));
+watch(() => auth.user, () => { void refresh(); });
 
 function hasWidget(key: string) {
   return settings.dashboard.includes(key);
@@ -117,39 +141,38 @@ const severityColor: Record<string, "neutral" | "warning" | "error"> = {
   critical: "error",
 };
 
-const periodText = computed(
-  () =>
-    PERIODS.find((item) => item.key === analytics.period)?.label.toLowerCase() ??
-    "",
+const criticalCount = computed(() =>
+  eventsStore.events.filter((event) => event.severity === "critical").length,
 );
+const dataErrors = computed(() => [trapsStore.error, agentsStore.error, eventsStore.error].filter(Boolean));
+const refreshing = computed(() => trapsStore.pending || agentsStore.pending || eventsStore.loading);
+const eventsAvailable = computed(() => Boolean(eventsStore.stats) && !eventsStore.error);
 
 const dashboardKpis = computed(() => [
   {
     label: "Ловушек",
-    value: String(trapsStore.traps.length),
+    value: trapsStore.loaded && !trapsStore.error ? String(trapsStore.traps.length) : "—",
     icon: "i-lucide-radar",
   },
   {
     label: "Агентов онлайн",
-    value: String(trapsStore.onlineCount),
+    value: agentsStore.onlineCount === null ? "—" : String(agentsStore.onlineCount),
     icon: "i-lucide-radio",
   },
   {
     label: "Событий captured",
-    value: (analytics.overview?.total ?? 0).toLocaleString("ru-RU"),
+    value: eventsStore.stats?.total.toLocaleString("ru-RU") ?? "—",
     icon: "i-lucide-activity",
   },
   {
-    label: "Критичных в журнале",
-    value: String(analytics.criticalCount),
+    label: "Критичных среди последних событий",
+    value: eventsAvailable.value ? String(criticalCount.value) : "—",
     icon: "i-lucide-shield-alert",
   },
 ]);
 
 const latestEvents = computed(() =>
-  [...analytics.windowEvents]
-    .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))
-    .slice(0, 6),
+  eventsStore.events.slice(0, 6),
 );
 
 const features = [
@@ -209,7 +232,7 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
           "
         >
           <UCard :ui="{ body: 'p-4' }">
-            <p class="text-eyebrow">Hellrain · HoneypotForge</p>
+            <p class="text-eyebrow">HellReign · HoneypotForge</p>
             <h1 class="mt-1 text-sm font-semibold text-highlighted">
               Модерация honeypot-инцидентов в одном окне
             </h1>
@@ -286,7 +309,7 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
                 />
               </div>
               <h2 class="text-sm font-semibold text-highlighted">
-                Команда Hellrain
+                Команда HellReign
               </h2>
             </div>
             <p class="mt-2 text-xs leading-relaxed text-muted">
@@ -477,6 +500,12 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
         class="mx-auto flex max-w-6xl flex-col gap-4"
         :class="fogMode ? 'px-4 py-8 sm:px-6' : ''"
       >
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
+          <span>Данные API · обновление каждые 5 секунд · журнал: последние {{ eventsStore.limit }} событий</span>
+          <UButton label="Обновить" icon="i-lucide-refresh-cw" variant="outline" :loading="refreshing" @click="refresh" />
+        </div>
+        <UAlert v-if="dataErrors.length" color="error" title="Не удалось обновить данные" :description="dataErrors.join('; ')" />
+        <p v-if="!auth.can('events:read')" class="text-sm text-muted">Нет права events:read для просмотра событий и графиков.</p>
         <template v-if="!fogMode">
           <div
             v-if="!settings.dashboard.length"
@@ -520,70 +549,76 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
 
         <div class="grid gap-4 lg:grid-cols-3">
           <UCard
-            v-if="hasWidget('activity')"
+            v-if="hasWidget('activity') && auth.can('events:read')"
             class="lg:col-span-2"
             :ui="{ body: 'p-4', header: 'p-4 pb-0' }"
           >
             <template #header>
               <div class="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 class="text-sm font-semibold text-highlighted">
-                  Активность ловушек
+                  События по минутам
                 </h2>
                 <span class="font-mono text-[11px] text-muted">
-                  {{ periodText }}
+                  последние {{ eventsStore.limit }} событий
                 </span>
               </div>
             </template>
             <DashboardChart
+              v-if="eventsAvailable && eventsStore.events.length"
               type="line"
               :data="lineData"
               :options="lineOptions"
               :height="220"
             />
+            <p v-else class="py-8 text-sm text-muted">{{ eventsStore.loading ? 'Загрузка событий…' : eventsStore.error ? 'Данные недоступны' : 'Пока нет событий' }}</p>
           </UCard>
 
           <UCard
-            v-if="hasWidget('vectors')"
+            v-if="hasWidget('vectors') && auth.can('events:read')"
             :ui="{ body: 'p-4', header: 'p-4 pb-0' }"
           >
             <template #header>
               <h2 class="text-sm font-semibold text-highlighted">
-                Векторы атак
+                Типы событий за всё время
               </h2>
             </template>
             <DashboardChart
+              v-if="eventsAvailable && eventsStore.stats?.total"
               type="doughnut"
               :data="donutData"
               :options="donutOptions"
               :height="220"
             />
+            <p v-else class="py-8 text-sm text-muted">{{ eventsStore.loading ? 'Загрузка статистики…' : eventsStore.error ? 'Данные недоступны' : 'Пока нет событий' }}</p>
           </UCard>
 
           <UCard
-            v-if="hasWidget('services')"
+            v-if="hasWidget('services') && auth.can('events:read')"
             class="lg:col-span-3"
             :ui="{ body: 'p-4', header: 'p-4 pb-0' }"
           >
             <template #header>
               <div class="flex flex-wrap items-baseline justify-between gap-2">
                 <h2 class="text-sm font-semibold text-highlighted">
-                  Цели по сервисам
+                  События по сервисам за всё время
                 </h2>
                 <span class="font-mono text-[11px] text-muted">
-                  топ-5 протоколов
+                  топ-5 сервисов
                 </span>
               </div>
             </template>
             <DashboardChart
+              v-if="eventsAvailable && eventsStore.stats?.total"
               type="bar"
               :data="barData"
               :options="barOptions"
               :height="200"
             />
+            <p v-else class="py-8 text-sm text-muted">{{ eventsStore.loading ? 'Загрузка статистики…' : eventsStore.error ? 'Данные недоступны' : 'Пока нет событий' }}</p>
           </UCard>
 
           <UCard
-            v-if="hasWidget('events')"
+            v-if="hasWidget('events') && auth.can('events:read')"
             class="lg:col-span-3"
             :ui="{ body: 'p-2', header: 'p-4 pb-0' }"
           >
@@ -607,24 +642,25 @@ const teamTags = ["Red Team", "Detection Eng.", "AppSec", "Automation"];
                   {{ formatDateTime(event.ts) }}
                 </span>
                 <UBadge
-                  :color="severityColor[event.severity]"
+                  :color="severityColor[event.severity ?? ''] ?? 'neutral'"
                   variant="subtle"
                   size="sm"
-                  :label="SEVERITY_LABELS[event.severity]"
+                  :label="SEVERITY_LABELS[event.severity as keyof typeof SEVERITY_LABELS] ?? event.severity ?? 'Не определён'"
                 />
                 <span class="font-mono text-xs text-highlighted">
-                  {{ event.source }}
+                  {{ event.src ?? '—' }}
                 </span>
                 <span class="text-xs text-toned">
-                  {{ event.trapName }}
+                  {{ event.agent_id }} · {{ event.service }} · {{ event.event }}
                 </span>
                 <span
                   class="min-w-0 flex-1 truncate text-right text-xs text-muted"
                 >
-                  {{ event.message }}
+                  {{ event.data ? JSON.stringify(event.data) : '' }}
                 </span>
               </li>
             </ul>
+            <p v-if="!latestEvents.length" class="p-4 text-sm text-muted">{{ eventsStore.loading ? 'Загрузка событий…' : eventsStore.error ? 'Данные недоступны' : 'Пока нет событий' }}</p>
           </UCard>
         </div>
       </div>

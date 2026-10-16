@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import type { ServiceKey, TrapLevel, TrapProfile } from "~/types/traps";
-import { LEVELS, SERVICES, serviceMeta } from "~/utils/traps";
+import type { TrapProfile } from "~/types/traps";
 
 const props = defineProps<{
   open: boolean;
@@ -13,6 +12,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useTrapsStore();
+const agents = useAgentsStore();
 const toast = useToast();
 const auth = useAuthStore();
 
@@ -24,79 +24,32 @@ const open = computed({
 });
 
 const name = ref("");
-const level = ref<TrapLevel>("medium");
 const agentId = ref("");
-const image = ref("");
-const services = ref<{ key: ServiceKey; port: number; enabled: boolean }[]>([]);
+const config = ref("{}");
+const formError = ref<string | null>(null);
+const agentItems = computed(() => agents.agents.map((agent) => ({
+  label: `${agent.agent_id} · ${agent.online ? 'Online' : 'Offline'}`,
+  value: agent.agent_id,
+})));
 
-const levelItems = LEVELS.map((item) => ({
-  label: item.label,
-  description: item.description,
-  value: item.key,
-}));
-
-const agentItems = computed(() =>
-  store.enrolledAgents.map((agent) => ({
-    label: `${agent.agent_id} · ${agent.online ? "online" : "offline"}`,
-    value: agent.agent_id,
-  })),
+const canSubmit = computed(
+  () => store.canManage && !store.actionPending && Boolean(name.value.trim())
+    && agents.agents.some((agent) => agent.agent_id === agentId.value),
 );
-
-const imageItems = computed(() =>
-  store.qemuImages.map((item) => ({
-    label: `${item.name} · ${(item.size_bytes / 1024 / 1024).toFixed(0)} МБ`,
-    value: item.name,
-  })),
-);
-
-const selectedServices = computed(() =>
-  services.value.filter((service) => service.enabled),
-);
-
-const isHigh = computed(() => level.value === "high");
-
-function serviceAvailable(key: ServiceKey) {
-  if (isHigh.value) return false;
-
-  return store.isServiceAvailable(key, level.value);
-}
-
-const canSubmit = computed(() => {
-  if (!canManage.value || !name.value.trim() || !agentId.value) return false;
-  if (isHigh.value) return Boolean(image.value);
-
-  return selectedServices.value.length > 0;
-});
 
 function resetForm() {
   const profile = props.profile;
 
-  name.value = "";
-  image.value = "";
-  level.value = "medium";
-  services.value = [];
-  agentId.value = store.enrolledAgents[0]?.agent_id ?? "";
-
-  if (!profile) return;
-
-  name.value = profile.name;
-  level.value = profile.level;
-
-  const keys: ServiceKey[] = SERVICES.map((service) => service.key);
-
-  for (const service of profile.services) {
-    if (!keys.includes(service.key)) keys.push(service.key);
+  if (!profile) {
+    name.value = "";
+    return;
   }
 
-  services.value = keys.map((key) => {
-    const preset = profile.services.find((item) => item.key === key);
-
-    return {
-      key,
-      port: preset?.port ?? serviceMeta(key).defaultPort,
-      enabled: Boolean(preset) && store.isServiceAvailable(key, profile.level),
-    };
-  });
+  name.value = profile.id;
+  agentId.value = agents.agents[0]?.agent_id ?? "";
+  config.value = "{}";
+  formError.value = null;
+  store.actionError = null;
 }
 
 watch(
@@ -113,25 +66,24 @@ watch(
   { immediate: true },
 );
 
-watch(level, (value) => {
-  if (value === "high" && !store.qemuImages.length) {
-    void store.loadQemuImages();
-  }
-});
-
 async function submit() {
   if (!props.profile || !canSubmit.value) return;
-
-  const created = await store.createTraps({
-    name: name.value,
-    level: level.value,
-    agentId: agentId.value,
-    services: selectedServices.value.map((service) => ({
-      key: service.key,
-      port: service.port,
-    })),
-    image: image.value || undefined,
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(config.value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+  } catch {
+    formError.value = "Конфигурация должна быть JSON-объектом";
+    return;
+  }
+  formError.value = null;
+  const created = await store.createTrap({
+    honeypot_type: props.profile.id,
+    name: name.value.trim(),
+    agent_id: agentId.value,
+    config: parsed,
   });
+  if (!created) return;
 
   const first = created[0];
 
@@ -167,7 +119,7 @@ async function submit() {
   <UModal
     v-model:open="open"
     :title="profile ? `Настройка · ${profile.name}` : 'Настройка профиля'"
-    description="Задайте параметры и сервисы — ловушка будет создана сразу"
+    description="Выберите агент и задайте конфигурацию типа ловушки"
     :ui="{ content: 'max-w-2xl' }"
   >
     <template #body>
@@ -200,111 +152,26 @@ async function submit() {
           />
         </UFormField>
 
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField
-            label="Уровень эмуляции"
-            hint="Насколько детально эмулируется сервис"
-          >
-            <USelect
-              v-model="level"
-              :items="levelItems"
-              icon="i-lucide-gauge"
-              class="w-full"
-              :ui="{ leading: 'pointer-events-none' }"
-            />
-          </UFormField>
-
-          <UFormField label="Агент размещения" required>
-            <USelect
-              v-model="agentId"
-              :items="agentItems"
-              :placeholder="agentItems.length ? undefined : 'нет агентов'"
-              icon="i-lucide-server"
-              class="w-full"
-              :disabled="!agentItems.length"
-              :ui="{ leading: 'pointer-events-none' }"
-            />
-          </UFormField>
-        </div>
-
-        <UFormField
-          v-if="isHigh"
-          label="Образ QEMU"
-          required
-          hint="High-уровень разворачивается как виртуальная машина"
-        >
+        <UFormField label="Агент размещения" required>
           <USelect
-            v-model="image"
-            :items="imageItems"
-            :placeholder="
-              imageItems.length ? 'выберите образ' : 'образы не загружены'
-            "
-            icon="i-lucide-disc-3"
+            v-model="agentId"
+            :items="agentItems"
+            icon="i-lucide-server"
             class="w-full"
-            :disabled="!imageItems.length"
             :ui="{ leading: 'pointer-events-none' }"
           />
-          <p
-            v-if="!imageItems.length"
-            class="mt-1.5 text-[11px] text-muted"
-          >
-            Загрузите .qcow2/.img/.raw через API /qemu-images — пока создать
-            high-ловушку нельзя.
-          </p>
         </UFormField>
-
-        <div v-else class="space-y-2">
-          <div class="flex items-center justify-between">
-            <span class="text-eyebrow">
-              Сервисы и порты
-            </span>
-            <span class="text-xs text-dimmed">
-              выбрано: {{ selectedServices.length }}
-            </span>
-          </div>
-
-          <div class="space-y-1.5">
-            <div
-              v-for="(service, index) in services"
-              :key="service.key"
-              class="flex flex-wrap items-center gap-3 rounded-md border border-default px-3 py-2 transition-colors"
-              :class="service.enabled ? 'bg-elevated/60' : 'opacity-70'"
-            >
-              <UCheckbox
-                :model-value="service.enabled"
-                :label="serviceMeta(service.key).label"
-                :disabled="!serviceAvailable(service.key)"
-                @update:model-value="services[index]!.enabled = $event as boolean"
-              />
-
-              <UIcon
-                :name="serviceMeta(service.key).icon"
-                class="size-4 text-dimmed"
-              />
-
-              <span
-                v-if="!serviceAvailable(service.key)"
-                class="text-[11px] text-muted"
-              >
-                нет в каталоге типов
-              </span>
-
-              <div class="ml-auto flex items-center gap-2">
-                <span class="text-xs text-muted">порт</span>
-                <UInput
-                  :model-value="service.port"
-                  type="number"
-                  size="sm"
-                  class="w-24 font-mono"
-                  :disabled="!service.enabled"
-                  @update:model-value="
-                    services[index]!.port = Number($event) || 0
-                  "
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+        <UAlert v-if="agents.error" color="error" :description="agents.error" />
+        <UButton v-if="agents.error" label="Повторить загрузку агентов" variant="outline" :loading="agents.pending" @click="agents.load()" />
+        <p v-else-if="!agents.agents.length" class="text-xs text-muted">Нет доступных агентов</p>
+        <UFormField label="Конфигурация (JSON)" required>
+          <UTextarea v-model="config" :rows="8" class="w-full font-mono" />
+        </UFormField>
+        <details v-if="profile.configSchema" class="text-xs text-muted">
+          <summary class="cursor-pointer">Схема конфигурации API</summary>
+          <pre class="mt-2 overflow-x-auto">{{ JSON.stringify(profile.configSchema, null, 2) }}</pre>
+        </details>
+        <UAlert v-if="formError || store.actionError" color="error" :description="formError || store.actionError || ''" />
       </div>
     </template>
 
@@ -332,6 +199,7 @@ async function submit() {
             label="Создать ловушку"
             :loading="store.pending"
             :disabled="!canSubmit"
+            :loading="store.actionPending === 'create'"
             @click="submit"
           />
         </div>

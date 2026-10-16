@@ -2,10 +2,8 @@
 import type { TrapProfile } from "~/types/traps";
 import { LEVEL_BY_KEY, serviceMeta } from "~/utils/traps";
 
-const props = withDefaults(
-  defineProps<{ profile: TrapProfile; count: number; canConfigure?: boolean }>(),
-  { canConfigure: true },
-);
+const props = defineProps<{ profile: TrapProfile; count: number | null }>();
+const store = useTrapsStore();
 
 const emit = defineEmits<{ (e: "configure", profile: TrapProfile): void }>();
 
@@ -45,8 +43,7 @@ function onConfigure() {
           />
         </div>
         <p class="mt-0.5 text-xs text-muted">
-          {{ profile.services.length }}
-          {{ profile.services.length === 1 ? "сервис" : "сервиса" }} · шаблон
+          {{ profile.id }} · тип API
         </p>
       </div>
     </div>
@@ -80,7 +77,7 @@ function onConfigure() {
     <template #footer>
       <div class="flex items-center justify-between gap-2">
         <span class="text-xs text-muted">
-          ловушек: <span class="font-mono text-toned">{{ count }}</span>
+          ловушек: <span class="font-mono text-toned">{{ count ?? '—' }}</span>
         </span>
         <UButton
           class="cursor-pointer"
@@ -89,7 +86,7 @@ function onConfigure() {
           size="sm"
           icon="i-lucide-settings"
           label="Настроить"
-          :disabled="!canConfigure"
+          :disabled="!store.canManage"
           @click="onConfigure"
         />
       </div>

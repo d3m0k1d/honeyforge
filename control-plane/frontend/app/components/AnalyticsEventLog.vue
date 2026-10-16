@@ -1,14 +1,9 @@
 <script setup lang="ts">
 import type { AnalyticsSortKey, AnalyticsEvent } from "~/stores/analytics";
-import { JOURNAL_PAGE_SIZE } from "~/stores/analytics";
-import {
-  SEVERITY_LABELS,
-  actionLabel,
-  formatDateTime,
-  serviceMeta,
-} from "~/utils/traps";
+import { formatDateTime } from "~/utils/traps";
 
 const store = useAnalyticsStore();
+const events = useEventsStore();
 
 const pageSize = JOURNAL_PAGE_SIZE;
 
@@ -20,23 +15,18 @@ const pages = computed(() =>
 
 const pageRows = computed(() => store.journalSorted);
 
-const page = computed({
-  get: () => store.page,
-  set: (value: number) => {
-    void store.setPage(value);
-  },
+  return store.sortedEvents.slice(start, start + pageSize);
 });
 
-const severityColor: Record<string, "neutral" | "warning" | "error"> = {
-  info: "neutral",
-  warning: "warning",
-  critical: "error",
-};
+watch(total, (value) => {
+  page.value = Math.min(page.value, Math.max(1, Math.ceil(value / pageSize)));
+});
+watch(() => [store.search, store.period, store.agentId, store.serviceFilter, store.actionFilter, store.severityFilter], () => { page.value = 1; });
 
 const sortColumns: { key: AnalyticsSortKey; label: string }[] = [
   { key: "ts", label: "Время" },
   { key: "source", label: "IP атакующего" },
-  { key: "trap", label: "Ловушка" },
+  { key: "agent", label: "Agent ID" },
   { key: "service", label: "Протокол" },
   { key: "action", label: "Действие" },
   { key: "severity", label: "Приоритет" },
@@ -55,7 +45,7 @@ function onSort(key: AnalyticsSortKey) {
 }
 
 function onRowClick(event: AnalyticsEvent) {
-  store.setTrap(event.trapId);
+  store.setAgent(event.agent_id);
   store.setSearch(event.source);
   navigateTo("/analytics");
 }
@@ -80,10 +70,11 @@ const rangeEnd = computed(() =>
             v-for="column in sortColumns"
             :key="column.key"
             class="whitespace-nowrap px-4 py-2.5 text-xs font-medium uppercase tracking-[0.14em] text-muted"
+            :aria-sort="store.sort.field === column.key ? (store.sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'"
           >
             <button
               type="button"
-              class="inline-flex cursor-pointer items-center gap-1 rounded transition-colors hover:text-highlighted"
+              class="inline-flex min-h-6 cursor-pointer items-center gap-1 rounded transition-colors hover:text-highlighted"
               :class="indicator(column.key) ? 'text-highlighted' : ''"
               @click="onSort(column.key)"
             >
@@ -114,7 +105,7 @@ const rangeEnd = computed(() =>
           </td>
 
           <td class="px-4 py-2.5 font-mono text-xs text-highlighted">
-            {{ event.source }}
+            {{ event.source || '—' }}
           </td>
 
           <td class="px-4 py-2.5">
@@ -123,7 +114,7 @@ const rangeEnd = computed(() =>
               class="cursor-pointer rounded text-xs text-toned transition-colors hover:text-primary"
               @click="onRowClick(event)"
             >
-              {{ event.trapName }}
+              {{ event.agent_id }}
             </button>
           </td>
 
@@ -131,25 +122,21 @@ const rangeEnd = computed(() =>
             <span
               class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/60 px-1.5 py-0.5 text-[11px] text-toned"
             >
-              <UIcon
-                :name="serviceMeta(event.service).icon"
-                class="size-3 text-muted"
-              />
-              {{ serviceMeta(event.service).label }}
+              {{ event.service }}
               <span class="font-mono text-dimmed">{{ event.port }}</span>
             </span>
           </td>
 
           <td class="px-4 py-2.5 text-xs text-toned">
-            {{ actionLabel(event.action) }}
+            {{ event.action }}
           </td>
 
           <td class="px-4 py-2.5">
             <UBadge
-              :color="severityColor[event.severity]"
+              :color="event.severity === 'critical' ? 'error' : event.severity === 'warning' ? 'warning' : 'neutral'"
               variant="subtle"
               size="sm"
-              :label="SEVERITY_LABELS[event.severity]"
+              :label="event.severity === 'unknown' ? 'Не указан' : event.severity"
             />
           </td>
 
@@ -170,10 +157,10 @@ const rangeEnd = computed(() =>
               </div>
               <div>
                 <p class="text-sm font-semibold text-highlighted">
-                  Событий не найдено
+                  {{ events.loading ? 'Загрузка событий…' : events.error ? 'События недоступны' : 'Событий не найдено' }}
                 </p>
                 <p class="mt-1 text-xs text-muted">
-                  Измените фильтры или период
+                  {{ events.error ? 'Повторите загрузку кнопкой «Обновить»' : 'Измените фильтры или период' }}
                 </p>
               </div>
               <UButton
@@ -203,7 +190,7 @@ const rangeEnd = computed(() =>
         v-if="pages > 1"
         v-model:page="page"
         :total="total"
-        :page-count="pageSize"
+        :items-per-page="pageSize"
         :sibling-count="1"
         show-edges
         size="sm"

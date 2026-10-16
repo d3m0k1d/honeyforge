@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import type { Trap, TrapFieldKey, TrapSort } from "~/types/traps";
+import type { DeploymentTrap as Trap, TrapFieldKey, TrapSort, ServiceKey } from "~/types/traps";
 import {
   AGENT_STATUSES,
   AGENT_STATUS_BY_KEY,
   LEVEL_BY_KEY,
+  SERVICE_BY_KEY,
   formatDate,
   formatEvents,
   profileIconFor,
@@ -24,29 +25,20 @@ function show(key: TrapFieldKey) {
   return store.fieldVisibility[key];
 }
 
-function profileName(trap: Trap) {
-  return store.profilesById[trap.profileId]?.name ?? "—";
+function profileName(profileId: string) {
+  return store.profiles.find((profile) => profile.id === profileId)?.name ?? profileId;
 }
 
-function profileIcon(trap: Trap) {
-  return (
-    store.profileIconById[trap.profileId] ??
-    profileIconFor(trap.services.map((service) => service.key))
-  );
+function profileIcon(profileId: string) {
+  return store.profiles.find((profile) => profile.id === profileId)?.icon ?? "i-lucide-shield-alert";
 }
 
 function visibleServices(trap: Trap) {
-  return trap.services.filter(
-    (service) => store.serviceVisibility[service.key] ?? true,
-  );
+  return trap.services.filter((service) => store.serviceVisibility[service.key] !== false);
 }
 
-function levelInfo(trap: Trap) {
-  return LEVEL_BY_KEY[trap.level] ?? LEVEL_BY_KEY.low;
-}
-
-function statusInfo(trap: Trap) {
-  return AGENT_STATUS_BY_KEY[trap.agentStatus] ?? AGENT_STATUS_BY_KEY.offline;
+function serviceInfo(key: string) {
+  return SERVICE_BY_KEY[key as ServiceKey];
 }
 
 function sortIndicator(field: TrapFieldKey) {
@@ -68,16 +60,13 @@ function openTrap(trap: Trap) {
 function rowItems(trap: Trap) {
   return [
     { label: "Подробнее", icon: "i-lucide-eye", onSelect: () => openTrap(trap) },
-    ...(canManage.value
-      ? [
-          {
-            label: "Удалить",
-            icon: "i-lucide-trash-2",
-            color: "error" as const,
-            onSelect: () => store.requestDelete(trap.id),
-          },
-        ]
-      : []),
+    {
+      label: "Уничтожить",
+      icon: "i-lucide-trash-2",
+      color: "error" as const,
+      disabled: !store.canManage || Boolean(store.actionPending) || trap.desiredState === "deleted",
+      onSelect: () => store.requestDelete(trap.id),
+    },
   ];
 }
 </script>
@@ -157,13 +146,13 @@ function rowItems(trap: Trap) {
                 v-for="service in visibleServices(trap)"
                 :key="service.key"
                 class="inline-flex items-center gap-1 rounded-md border border-default bg-elevated/60 px-1.5 py-0.5 text-[11px] text-toned"
-                :title="`${serviceMeta(service.key).label} · порт ${service.port}`"
+                :title="`${serviceInfo(service.key)?.label ?? service.key} · порт ${service.port ?? '—'}`"
               >
                 <UIcon
-                  :name="serviceMeta(service.key).icon"
+                  :name="serviceInfo(service.key)?.icon ?? 'i-lucide-plug'"
                   class="size-3 text-muted"
                 />
-                {{ serviceMeta(service.key).label }}
+                {{ serviceInfo(service.key)?.label ?? service.key }}
               </span>
               <span v-if="!visibleServices(trap).length" class="text-xs text-dimmed">
                 —
@@ -175,7 +164,7 @@ function rowItems(trap: Trap) {
             v-if="show('port')"
             class="px-4 py-2.5 font-mono text-xs text-toned tabular-nums"
           >
-            {{ trap.services.map((service) => service.port).join(", ") }}
+            {{ trap.services.map((service) => service.port ?? '—').join(", ") || '—' }}
           </td>
 
           <td v-if="show('level')" class="px-4 py-2.5">
@@ -191,10 +180,10 @@ function rowItems(trap: Trap) {
             <span class="inline-flex items-center gap-2">
               <span
                 class="size-1.5 shrink-0 rounded-full"
-                :class="statusInfo(trap).dot"
+                :class="trap.agentStatus === 'unknown' ? 'bg-dimmed' : AGENT_STATUS_BY_KEY[trap.agentStatus].dot"
               />
               <span class="text-xs text-toned">
-                {{ statusInfo(trap).label }}
+                {{ trap.agentId }} · {{ trap.agentStatus === 'unknown' ? 'Неизвестно' : AGENT_STATUS_BY_KEY[trap.agentStatus].label }}
               </span>
             </span>
           </td>
@@ -203,8 +192,8 @@ function rowItems(trap: Trap) {
             v-if="show('events')"
             class="px-4 py-2.5 font-mono text-xs tabular-nums"
           >
-            <span :class="trap.eventsCount > 1000 ? 'text-primary' : 'text-toned'">
-              {{ formatEvents(trap.eventsCount) }}
+            <span :class="(trap.eventsCount ?? 0) > 1000 ? 'text-primary' : 'text-toned'">
+              {{ trap.eventsCount === null ? '—' : formatEvents(trap.eventsCount) }}
             </span>
           </td>
 

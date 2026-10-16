@@ -1,5 +1,5 @@
 <script setup lang="ts">
-definePageMeta({ permission: "profiles:read" });
+definePageMeta({ permission: "deployments:read" });
 
 import type { TrapProfile } from "~/types/traps";
 
@@ -52,49 +52,25 @@ function onCreate(trapId: string) {
           Профили ловушек
         </h1>
         <p class="mt-1 max-w-2xl text-sm text-muted">
-          Готовые шаблоны honeypot-сервисов. Выберите профиль, задайте порты,
-          уровень эмуляции и агент — ловушка будет создана автоматически.
+          Типы ловушек из API. Выберите тип, агент и конфигурацию JSON.
         </p>
       </div>
 
       <UBadge color="neutral" variant="outline" size="lg">
-        профилей: {{ cards.length }}
+        профилей: {{ store.pending || store.catalogueError ? '—' : cards.length }}
       </UBadge>
     </div>
 
-    <UAlert
-      v-if="store.error"
-      color="error"
-      variant="soft"
-      icon="i-lucide-triangle-alert"
-      :title="store.error"
-    />
-
-    <div
-      v-if="store.loading && !cards.length"
-      class="flex items-center justify-center gap-2 rounded-lg border border-default py-10"
-    >
-      <UIcon
-        name="i-lucide-loader-circle"
-        class="size-4 animate-spin text-dimmed"
-      />
-      <span class="text-xs text-muted">Загрузка профилей…</span>
-    </div>
-
-    <div
-      v-else-if="!cards.length"
-      class="rounded-lg border border-default px-4 py-10 text-center text-xs text-muted"
-    >
-      Профили не найдены — создайте их через API или назначьте агентам
-    </div>
-
-    <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <UAlert v-if="store.catalogueError" color="error" :description="store.catalogueError" />
+    <UButton label="Обновить" variant="outline" class="self-start" :loading="store.pending" @click="store.load()" />
+    <p v-if="store.pending" role="status" class="text-sm text-muted">Загрузка каталога…</p>
+    <p v-else-if="!store.catalogueError && !cards.length" class="text-sm text-muted">Каталог пуст</p>
+    <div v-if="!store.pending && !store.catalogueError" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <TrapProfileCard
         v-for="card in cards"
         :key="card.profile.id"
         :profile="card.profile"
-        :count="card.count"
-        :can-configure="canManage"
+        :count="store.loaded ? card.count : null"
         @configure="configure"
       />
     </div>

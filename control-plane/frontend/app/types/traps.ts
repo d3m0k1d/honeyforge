@@ -45,7 +45,23 @@ export interface Trap {
   createdAt: string;
 }
 
-/** Отображаемый шаблон профиля (ProfileRead → view). */
+export interface DeploymentTrap extends Omit<Trap, "services" | "eventsCount" | "agentStatus"> {
+  services: { key: string; port: number | null }[];
+  eventsCount: number | null;
+  agentStatus: AgentStatusKey | "unknown";
+  desiredState: string;
+  observedState: string;
+  lastError: string | null;
+}
+
+export interface TrapAgent {
+  id: string;
+  name: string;
+  host: string;
+  version: string;
+  uptime: string;
+}
+
 export interface TrapProfile {
   id: string;
   name: string;
@@ -54,6 +70,7 @@ export interface TrapProfile {
   level: TrapLevel;
   tags: string[];
   services: TrapService[];
+  configSchema?: Record<string, unknown>;
 }
 
 export type TrapFieldKey =

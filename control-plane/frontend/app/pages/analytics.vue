@@ -2,38 +2,41 @@
 definePageMeta({ permission: "analytics:read" });
 
 import type { ChartData, ChartOptions } from "chart.js";
-import { actionLabel } from "~/utils/traps";
 import { PERIODS } from "~/stores/analytics";
+import { useEventsStore } from "~/stores/events";
 
 const GRID = "rgba(148, 163, 184, 0.12)";
 const AXIS = "#94a3b8";
 
 const store = useAnalyticsStore();
-const traps = useTrapsStore();
+const eventsStore = useEventsStore();
 const route = useRoute();
 
 const stats = computed(() => {
-  const overview = store.overview;
+  const events = store.sortedEvents;
+  const unavailable = Boolean(eventsStore.error) || (eventsStore.loading && !store.baseEvents.length);
 
   return [
     {
       label: "Событий в выборке",
-      value: (overview?.total ?? 0).toLocaleString("ru-RU"),
+      value: unavailable ? "—" : events.length.toLocaleString("ru-RU"),
       icon: "i-lucide-activity",
     },
     {
       label: "Уникальных атакующих",
-      value: String(overview?.unique_sources ?? 0),
+      value: unavailable ? "—" : String(store.uniqueAttackers),
       icon: "i-lucide-users-round",
     },
     {
       label: "Критических",
-      value: String(store.criticalCount),
+      value: unavailable ? "—" : String(
+        events.filter((event) => event.severity === "critical").length,
+      ),
       icon: "i-lucide-shield-alert",
     },
     {
-      label: "Ловушек затронуто",
-      value: String(store.involvedTraps),
+      label: "Агентов в выборке",
+      value: unavailable ? "—" : String(store.involvedAgents),
       icon: "i-lucide-radar",
     },
   ];
@@ -57,15 +60,12 @@ const timelineData = computed<ChartData<"line">>(() => ({
 }));
 
 const severityData = computed<ChartData<"doughnut">>(() => ({
-  labels: ["Инфо", "Предупреждение", "Критично"],
+  labels: Object.keys(store.severityStats),
   datasets: [
     {
-      data: [
-        store.severityStats.info,
-        store.severityStats.warning,
-        store.severityStats.critical,
-      ],
-      backgroundColor: ["#38bdf8", "#f59e0b", "#f43f5e"],
+      data: Object.values(store.severityStats),
+      backgroundColor: Object.keys(store.severityStats).map((key) =>
+        key === "critical" ? "#f43f5e" : key === "warning" ? "#f59e0b" : key === "info" ? "#38bdf8" : "#94a3b8"),
       borderWidth: 0,
       hoverOffset: 6,
     },
@@ -87,7 +87,7 @@ const serviceData = computed<ChartData<"bar">>(() => ({
 }));
 
 const actionData = computed<ChartData<"bar">>(() => ({
-  labels: store.actionStats.map((item) => actionLabel(item.label)),
+  labels: store.actionStats.map((item) => item.label),
   datasets: [
     {
       label: "События",
@@ -114,12 +114,12 @@ const attackerData = computed<ChartData<"bar">>(() => ({
   ],
 }));
 
-const trapData = computed<ChartData<"bar">>(() => ({
-  labels: store.trapStats.map((item) => item.label),
+const agentData = computed<ChartData<"bar">>(() => ({
+  labels: store.agentStats.map((item) => item.label),
   datasets: [
     {
       label: "События",
-      data: store.trapStats.map((item) => item.count),
+      data: store.agentStats.map((item) => item.count),
       backgroundColor: "rgba(245, 158, 11, 0.35)",
       borderColor: "#f59e0b",
       borderWidth: 1,
@@ -175,29 +175,20 @@ const attackerOptions: ChartOptions<"bar"> = {
   },
 };
 
-const showTrapChart = computed(() => !store.trapId && store.trapStats.length > 1);
+const showAgentChart = computed(() => !store.agentId && store.agentStats.length > 1);
 
 const periodLabel = computed(
   () => PERIODS.find((item) => item.key === store.period)?.label ?? "",
 );
 
-const scopeName = computed(() =>
-  store.activeTrap ? store.activeTrap.name || store.activeTrap.id : null,
-);
-
-onMounted(async () => {
-  await traps.load();
-
-  const id = route.query.trap;
-
-  if (typeof id === "string" && traps.getTrap(id)) {
-    // setTrap сам перезапрашивает данные (watcher в сторе).
-    store.setTrap(id);
-    return;
-  }
-
-  await store.load();
+let poll: ReturnType<typeof setInterval> | undefined;
+onMounted(() => {
+  const id = route.query.agent;
+  if (typeof id === "string") store.setAgent(id);
+  void eventsStore.load();
+  poll = setInterval(() => { void eventsStore.load(); }, 5000);
 });
+onUnmounted(() => clearInterval(poll));
 </script>
 
 <template>
@@ -209,27 +200,37 @@ onMounted(async () => {
           Аналитика
         </h1>
         <p class="mt-1 max-w-2xl text-sm text-muted">
-          Журнал событий всех ловушек: агрегированная статистика по
+          Журнал событий агентов: агрегированная статистика по
           приоритетам, протоколам и типам атак, топ источников и выгрузка
           данных.
         </p>
       </div>
 
       <div
-        v-if="scopeName"
+        v-if="store.agentId"
         class="flex items-center gap-2 rounded-lg border border-default bg-elevated/60 px-3 py-1.5"
       >
         <UIcon name="i-lucide-radar" class="size-4 text-primary" />
-        <span class="text-sm text-highlighted">{{ scopeName }}</span>
+        <span class="text-sm text-highlighted">Agent ID: {{ store.agentId }}</span>
         <button
           type="button"
           class="cursor-pointer rounded text-muted transition-colors hover:text-highlighted"
-          @click="store.setTrap(null)"
+          aria-label="Все агенты"
+          @click="store.setAgent(null)"
         >
           <UIcon name="i-lucide-x" class="size-4" />
         </button>
       </div>
     </div>
+
+    <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-muted" aria-live="polite">
+      <p>Фильтры и графики: последние {{ eventsStore.limit }} событий, не полная история.
+        <span v-if="eventsStore.stats">Всего в API (без фильтров): {{ eventsStore.stats.total.toLocaleString('ru-RU') }}.</span>
+      </p>
+      <UButton label="Обновить" icon="i-lucide-refresh-cw" color="neutral" variant="outline" :loading="eventsStore.loading" @click="eventsStore.load()" />
+    </div>
+    <UAlert v-if="eventsStore.error" color="error" title="Не удалось обновить события" :description="eventsStore.error" />
+    <p v-if="eventsStore.loading && !store.baseEvents.length" role="status" class="text-sm text-muted">Загрузка событий…</p>
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <UCard v-for="item in stats" :key="item.label" :ui="{ body: 'p-4' }">
@@ -340,17 +341,17 @@ onMounted(async () => {
       </UCard>
 
       <UCard
-        v-if="showTrapChart"
+        v-if="showAgentChart"
         :ui="{ body: 'p-4', header: 'p-4 pb-0' }"
       >
         <template #header>
           <h2 class="text-sm font-semibold text-highlighted">
-            Активность по ловушкам
+            Активность по агентам
           </h2>
         </template>
         <DashboardChart
           type="bar"
-          :data="trapData"
+          :data="agentData"
           :options="barOptions"
           :height="220"
         />
