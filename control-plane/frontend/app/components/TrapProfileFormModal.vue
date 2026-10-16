@@ -1,12 +1,5 @@
 <script setup lang="ts">
-import type { ServiceKey, TrapLevel, TrapProfile } from "~/types/traps";
-import {
-  AGENTS,
-  AGENT_STATUSES,
-  LEVELS,
-  SERVICES,
-  SERVICE_BY_KEY,
-} from "~/utils/traps";
+import type { TrapProfile } from "~/types/traps";
 
 const props = defineProps<{
   open: boolean;
@@ -19,6 +12,7 @@ const emit = defineEmits<{
 }>();
 
 const store = useTrapsStore();
+const agents = useAgentsStore();
 const toast = useToast();
 
 const open = computed({
@@ -27,33 +21,17 @@ const open = computed({
 });
 
 const name = ref("");
-const description = ref("");
-const level = ref<TrapLevel>("medium");
-const agentId = ref(AGENTS[0]!.id);
-const agentStatus = ref<"online" | "syncing">("online");
-const services = ref<{ key: ServiceKey; port: number; enabled: boolean }[]>([]);
-
-const levelItems = LEVELS.map((item) => ({
-  label: item.label,
-  description: item.description,
-  value: item.key,
-}));
-
-const agentItems = AGENTS.map((agent) => ({
-  label: `${agent.name} · ${agent.host}`,
-  value: agent.id,
-}));
-
-const statusItems = AGENT_STATUSES.filter(
-  (status) => status.key === "online" || status.key === "syncing",
-).map((status) => ({ label: status.label, value: status.key }));
-
-const selectedServices = computed(() =>
-  services.value.filter((service) => service.enabled),
-);
+const agentId = ref("");
+const config = ref("{}");
+const formError = ref<string | null>(null);
+const agentItems = computed(() => agents.agents.map((agent) => ({
+  label: `${agent.agent_id} · ${agent.online ? 'Online' : 'Offline'}`,
+  value: agent.agent_id,
+})));
 
 const canSubmit = computed(
-  () => Boolean(name.value.trim()) && selectedServices.value.length > 0,
+  () => store.canManage && !store.actionPending && Boolean(name.value.trim())
+    && agents.agents.some((agent) => agent.agent_id === agentId.value),
 );
 
 function resetForm() {
@@ -61,24 +39,14 @@ function resetForm() {
 
   if (!profile) {
     name.value = "";
-    description.value = "";
-    services.value = [];
     return;
   }
 
-  name.value = `${profile.id}-${Math.random().toString(36).slice(2, 6)}`;
-  description.value = profile.description;
-  level.value = profile.level;
-
-  services.value = SERVICES.map((service) => {
-    const preset = profile.services.find((item) => item.key === service.key);
-
-    return {
-      key: service.key,
-      port: preset?.port ?? service.defaultPort,
-      enabled: Boolean(preset),
-    };
-  });
+  name.value = profile.id;
+  agentId.value = agents.agents[0]?.agent_id ?? "";
+  config.value = "{}";
+  formError.value = null;
+  store.actionError = null;
 }
 
 watch(
@@ -89,20 +57,24 @@ watch(
   { immediate: true },
 );
 
-function submit() {  if (!props.profile || !canSubmit.value) return;
-
-  const created = store.createTrap({
-    profileId: props.profile.id,
-    name: name.value,
-    description: description.value,
-    level: level.value,
-    agentId: agentId.value,
-    agentStatus: agentStatus.value,
-    services: selectedServices.value.map((service) => ({
-      key: service.key,
-      port: service.port,
-    })),
+async function submit() {
+  if (!props.profile || !canSubmit.value) return;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(config.value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+  } catch {
+    formError.value = "Конфигурация должна быть JSON-объектом";
+    return;
+  }
+  formError.value = null;
+  const created = await store.createTrap({
+    honeypot_type: props.profile.id,
+    name: name.value.trim(),
+    agent_id: agentId.value,
+    config: parsed,
   });
+  if (!created) return;
 
   toast.add({
     title: `Ловушка ${created.name} создана`,
@@ -120,7 +92,7 @@ function submit() {  if (!props.profile || !canSubmit.value) return;
   <UModal
     v-model:open="open"
     :title="profile ? `Настройка · ${profile.name}` : 'Настройка профиля'"
-    description="Задайте параметры и сервисы — ловушка будет создана сразу"
+    description="Выберите агент и задайте конфигурацию типа ловушки"
     :ui="{ content: 'max-w-2xl' }"
   >
     <template #body>
@@ -144,90 +116,26 @@ function submit() {  if (!props.profile || !canSubmit.value) return;
           />
         </UFormField>
 
-        <UFormField label="Описание">
-          <UTextarea
-            v-model="description"
-            :rows="2"
-            placeholder="Зачем нужна ловушка и что ожидаем поймать"
+        <UFormField label="Агент размещения" required>
+          <USelect
+            v-model="agentId"
+            :items="agentItems"
+            icon="i-lucide-server"
             class="w-full"
+            :ui="{ leading: 'pointer-events-none' }"
           />
         </UFormField>
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <UFormField label="Уровень эмуляции" hint="Насколько детально эмулируется сервис">
-            <USelect
-              v-model="level"
-              :items="levelItems"
-              icon="i-lucide-gauge"
-              class="w-full"
-              :ui="{ leading: 'pointer-events-none' }"
-            />
-          </UFormField>
-
-          <UFormField label="Агент размещения">
-            <USelect
-              v-model="agentId"
-              :items="agentItems"
-              icon="i-lucide-server"
-              class="w-full"
-              :ui="{ leading: 'pointer-events-none' }"
-            />
-          </UFormField>
-        </div>
-
-        <UFormField label="Стартовый статус">
-          <URadioGroup
-            v-model="agentStatus"
-            :items="statusItems"
-            variant="list"
-            size="sm"
-          />
+        <UAlert v-if="agents.error" color="error" :description="agents.error" />
+        <UButton v-if="agents.error" label="Повторить загрузку агентов" variant="outline" :loading="agents.pending" @click="agents.load()" />
+        <p v-else-if="!agents.agents.length" class="text-xs text-muted">Нет доступных агентов</p>
+        <UFormField label="Конфигурация (JSON)" required>
+          <UTextarea v-model="config" :rows="8" class="w-full font-mono" />
         </UFormField>
-
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
-            <span class="text-eyebrow">
-              Сервисы и порты
-            </span>
-            <span class="text-xs text-dimmed">
-              выбрано: {{ selectedServices.length }}
-            </span>
-          </div>
-
-          <div class="space-y-1.5">
-            <div
-              v-for="(service, index) in services"
-              :key="service.key"
-              class="flex flex-wrap items-center gap-3 rounded-md border border-default px-3 py-2 transition-colors"
-              :class="service.enabled ? 'bg-elevated/60' : 'opacity-70'"
-            >
-              <UCheckbox
-                :model-value="service.enabled"
-                :label="SERVICE_BY_KEY[service.key].label"
-                @update:model-value="services[index]!.enabled = $event as boolean"
-              />
-
-              <UIcon
-                :name="SERVICE_BY_KEY[service.key].icon"
-                class="size-4 text-dimmed"
-              />
-
-              <div class="ml-auto flex items-center gap-2">
-                <span class="text-xs text-muted">порт</span>
-                <UInput
-                  :model-value="service.port"
-                  type="number"
-                  size="sm"
-                  class="w-24 font-mono"
-                  :disabled="!service.enabled"
-                  @update:model-value="
-                    services[index]!.port = Number($event) || 0
-                  "
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+        <details v-if="profile.configSchema" class="text-xs text-muted">
+          <summary class="cursor-pointer">Схема конфигурации API</summary>
+          <pre class="mt-2 overflow-x-auto">{{ JSON.stringify(profile.configSchema, null, 2) }}</pre>
+        </details>
+        <UAlert v-if="formError || store.actionError" color="error" :description="formError || store.actionError || ''" />
       </div>
     </template>
 
@@ -249,6 +157,7 @@ function submit() {  if (!props.profile || !canSubmit.value) return;
             icon="i-lucide-plus"
             label="Создать ловушку"
             :disabled="!canSubmit"
+            :loading="store.actionPending === 'create'"
             @click="submit"
           />
         </div>

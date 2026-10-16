@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import type { ServiceKey, TrapSort } from "~/types/traps";
+import type { TrapSort } from "~/types/traps";
 import { SERVICES, TRAP_FIELDS } from "~/utils/traps";
 
 const store = useTrapsStore();
 
 const sortItems = [
-  { label: "События", value: "events" },
   { label: "Название", value: "name" },
   { label: "Профиль", value: "profile" },
   { label: "Уровень", value: "level" },
@@ -27,6 +26,7 @@ const agentItems = [
   { label: "Синхронизация", value: "syncing" },
   { label: "Offline", value: "offline" },
   { label: "Ошибка", value: "error" },
+  { label: "Неизвестно", value: "unknown" },
 ];
 
 const visibleCount = computed(
@@ -71,7 +71,7 @@ function onSortSelect(field: string) {
       class="w-44"
       :ui="{ leading: 'pointer-events-none' }"
       @update:model-value="
-        store.setAgentFilter($event as 'all' | 'online' | 'syncing' | 'offline' | 'error')
+        store.setAgentFilter($event as typeof store.agentFilter)
       "
     />
 

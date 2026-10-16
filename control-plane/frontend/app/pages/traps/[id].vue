@@ -1,18 +1,16 @@
 <script setup lang="ts">
-definePageMeta({ permission: "honeypots:read" });
+definePageMeta({ permission: "deployments:read" });
 
-import type { Trap } from "~/types/traps";
+import type { DeploymentTrap as Trap, ServiceKey } from "~/types/traps";
 import {
-  AGENT_BY_ID,
   AGENT_STATUSES,
   LEVEL_BY_KEY,
-  PROFILES,
   SERVICE_BY_KEY,
   formatDateTime,
-  formatEvents,
 } from "~/utils/traps";
 
 const store = useTrapsStore();
+const agents = useAgentsStore();
 const route = useRoute();
 const toast = useToast();
 
@@ -27,10 +25,10 @@ const deleteOpen = computed({
 });
 
 const profile = computed(
-  () => PROFILES.find((item) => item.id === trap.value?.profileId) ?? null,
+  () => store.profiles.find((item) => item.id === trap.value?.profileId) ?? null,
 );
 const agent = computed(() =>
-  trap.value ? (AGENT_BY_ID[trap.value.agentId] ?? null) : null,
+  trap.value ? agents.agents.find((item) => item.agent_id === trap.value!.agentId) ?? null : null,
 );
 const level = computed(() =>
   trap.value ? LEVEL_BY_KEY[trap.value.level] : null,
@@ -51,26 +49,40 @@ onMounted(() => {
   store.load();
 });
 
-function toggleStatus() {
+async function toggleStatus() {
   if (!trap.value) return;
 
-  const next = trap.value.agentStatus === "online" ? "offline" : "online";
-
-  store.setAgentStatus(trap.value.id, next);
+  const next = trap.value.desiredState === "running" ? "stop" : "start";
+  const updated = await store.runAction(trap.value.id, next);
+  if (!updated) return;
 
   toast.add({
-    title:
-      next === "online"
-        ? `Ловушка ${trap.value.name} запущена`
-        : `Ловушка ${trap.value.name} остановлена`,
-    color: next === "online" ? "success" : "warning",
-    icon: next === "online" ? "i-lucide-play" : "i-lucide-circle-parking",
+    title: `Команда ${next} принята`,
+    color: "success",
   });
+}
+
+async function confirmDestroy() {
+  if (await store.confirmDelete()) {
+    toast.add({ title: "Команда destroy принята", color: "success" });
+  }
+}
+
+function serviceInfo(key: string) {
+  return SERVICE_BY_KEY[key as ServiceKey];
 }
 </script>
 
 <template>
-  <div v-if="trap" class="flex flex-col gap-5">
+  <div v-if="store.pending || store.error" class="space-y-3 py-8">
+    <p v-if="store.pending" role="status" class="text-sm text-muted">Загрузка ловушки…</p>
+    <UAlert v-if="store.error" color="error" :description="store.error" />
+    <UButton v-if="store.error" label="Повторить" :loading="store.pending" @click="store.load()" />
+  </div>
+  <div v-else-if="trap" class="flex flex-col gap-5">
+    <UAlert v-if="store.actionError" color="error" :description="store.actionError" />
+    <UAlert v-if="agents.error" color="warning" :description="agents.error" />
+    <UButton label="Обновить состояние" variant="outline" class="self-start" @click="store.load()" />
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0">
         <UButton
@@ -87,7 +99,7 @@ function toggleStatus() {
           <div
             class="flex size-11 shrink-0 items-center justify-center rounded-lg border border-default bg-elevated"
           >
-            <UIcon :name="profile?.icon" class="size-5 text-primary" />
+            <UIcon :name="profile?.icon ?? 'i-lucide-radar'" class="size-5 text-primary" />
           </div>
           <div class="min-w-0">
             <div class="flex flex-wrap items-center gap-2">
@@ -108,7 +120,7 @@ function toggleStatus() {
                   class="size-1.5 rounded-full"
                   :class="status?.dot"
                 />
-                <span class="text-toned">{{ status?.label }}</span>
+                <span class="text-toned">{{ status?.label ?? 'Статус агента неизвестен' }}</span>
               </span>
             </div>
             <p class="font-mono text-[10px] text-dimmed">
@@ -120,21 +132,26 @@ function toggleStatus() {
 
       <div class="flex flex-wrap gap-2">
         <UButton
+          v-if="store.canManage"
           class="cursor-pointer"
           color="neutral"
           variant="outline"
           size="sm"
-          :icon="trap.agentStatus === 'online' ? 'i-lucide-circle-parking' : 'i-lucide-play'"
-          :label="trap.agentStatus === 'online' ? 'Остановить' : 'Запустить'"
+          :icon="trap.desiredState === 'running' ? 'i-lucide-circle-parking' : 'i-lucide-play'"
+          :label="trap.desiredState === 'running' ? 'Остановить' : 'Запустить'"
+          :loading="store.actionPending === trap.id"
+          :disabled="Boolean(store.actionPending) || trap.desiredState === 'deleted'"
           @click="toggleStatus"
         />
         <UButton
+          v-if="store.canManage"
           class="cursor-pointer"
           color="error"
           variant="outline"
           size="sm"
           icon="i-lucide-trash-2"
-          label="Удалить"
+          label="Уничтожить"
+          :disabled="Boolean(store.actionPending) || trap.desiredState === 'deleted'"
           @click="store.requestDelete(trap.id)"
         />
       </div>
@@ -165,17 +182,17 @@ function toggleStatus() {
           <div class="flex items-start justify-between gap-2">
             <dt class="text-muted">Порты</dt>
             <dd class="text-right font-mono text-highlighted">
-              {{ trap.services.map((service) => service.port).join(", ") }}
+              {{ trap.services.map((service) => service.port ?? '—').join(", ") || '—' }}
             </dd>
           </div>
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">Агент</dt>
-            <dd class="text-highlighted">{{ agent?.name ?? trap.agentId }}</dd>
+            <dd class="text-highlighted">{{ trap.agentId }}</dd>
           </div>
           <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">События</dt>
+            <dt class="text-muted">Состояние / желаемое</dt>
             <dd class="font-mono text-primary tabular-nums">
-              {{ formatEvents(trap.eventsCount) }}
+              {{ trap.observedState }} / {{ trap.desiredState }}
             </dd>
           </div>
         </dl>
@@ -203,40 +220,39 @@ function toggleStatus() {
           />
           <div>
             <p class="text-sm font-medium text-highlighted">
-              {{ agent?.name ?? "не назначен" }}
+              {{ trap.agentId }}
             </p>
-            <p class="font-mono text-[10px] text-dimmed">{{ agent?.host }}</p>
+            <p class="font-mono text-[10px] text-dimmed">{{ agent?.profile_name ?? agent?.profile_id ?? '—' }}</p>
           </div>
         </div>
 
         <dl class="mt-4 space-y-2.5 text-xs">
           <div class="flex items-center justify-between gap-2">
             <dt class="text-muted">Статус</dt>
-            <dd class="text-highlighted">{{ status?.label }}</dd>
+            <dd class="text-highlighted">{{ status?.label ?? 'Неизвестно' }}</dd>
           </div>
           <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">Хост</dt>
-            <dd class="font-mono text-highlighted">{{ agent?.host ?? "—" }}</dd>
+            <dt class="text-muted">Регистрация</dt>
+            <dd class="font-mono text-highlighted">{{ agent?.enrolled_at ? formatDateTime(agent.enrolled_at) : "—" }}</dd>
           </div>
           <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">Версия агента</dt>
-            <dd class="font-mono text-highlighted">{{ agent?.version ?? "—" }}</dd>
-          </div>
-          <div class="flex items-center justify-between gap-2">
-            <dt class="text-muted">Uptime</dt>
-            <dd class="font-mono text-highlighted">{{ agent?.uptime ?? "—" }}</dd>
+            <dt class="text-muted">Последний heartbeat</dt>
+            <dd class="font-mono text-highlighted">{{ agent?.last_heartbeat_at ? formatDateTime(agent.last_heartbeat_at) : "—" }}</dd>
           </div>
         </dl>
 
         <UButton
+          v-if="store.canManage"
           class="mt-4 cursor-pointer"
           color="neutral"
           variant="outline"
           size="sm"
           block
           icon="i-lucide-refresh-cw"
-          label="Пересинхронизировать"
-          @click="store.setAgentStatus(trap.id, 'syncing')"
+          label="Reconcile"
+          :loading="store.actionPending === trap.id"
+          :disabled="Boolean(store.actionPending) || trap.desiredState === 'deleted'"
+          @click="store.runAction(trap.id, 'reconcile')"
         />
       </UCard>
 
@@ -255,14 +271,14 @@ function toggleStatus() {
             class="flex items-center gap-3 rounded-md border border-default px-3 py-2"
           >
             <UIcon
-              :name="SERVICE_BY_KEY[service.key].icon"
+              :name="serviceInfo(service.key)?.icon ?? 'i-lucide-plug'"
               class="size-4 text-dimmed"
             />
             <span class="text-sm text-highlighted">
-              {{ SERVICE_BY_KEY[service.key].label }}
+              {{ serviceInfo(service.key)?.label ?? service.key }}
             </span>
             <span class="ml-auto font-mono text-xs text-toned tabular-nums">
-              :{{ service.port }}
+              {{ service.port === null ? '—' : `:${service.port}` }}
             </span>
           </div>
         </div>
@@ -271,7 +287,7 @@ function toggleStatus() {
           v-if="!trap.services.length"
           class="py-6 text-center text-xs text-dimmed"
         >
-          Сервисы не настроены
+          Сервисы listen не представлены для этого типа развёртывания
         </div>
       </UCard>
 
@@ -285,7 +301,7 @@ function toggleStatus() {
               </h2>
             </div>
             <span class="font-mono text-[11px] text-muted">
-              всего {{ trap.eventsCount.toLocaleString("ru-RU") }}
+              Недоступно для отдельного развёртывания
             </span>
           </div>
         </template>
@@ -314,7 +330,7 @@ function toggleStatus() {
           </div>
 
           <div v-if="!trap.events.length" class="px-3 py-8 text-center text-xs text-dimmed">
-            Событий пока нет — ловушка только что создана
+            API не связывает события агента с отдельным развёртыванием. Общий журнал доступен в аналитике.
           </div>
         </div>
       </UCard>
@@ -322,10 +338,14 @@ function toggleStatus() {
 
     <UModal
       v-model:open="deleteOpen"
-      title="Удалить ловушку?"
-      description="Действие необратимо"
+      title="Уничтожить ловушку?"
+      description="API поставит команду destroy в очередь. Запись развёртывания сохранится."
       :ui="{ content: 'max-w-md' }"
     >
+      <template #body>
+        <UAlert v-if="store.actionError" color="error" :description="store.actionError" />
+        <p v-else class="text-sm text-muted">{{ trap.name }}</p>
+      </template>
       <template #footer>
         <div class="flex w-full justify-end gap-2">
           <UButton
@@ -339,15 +359,17 @@ function toggleStatus() {
             class="cursor-pointer"
             color="error"
             icon="i-lucide-trash-2"
-            label="Удалить"
-            @click="store.confirmDelete(); navigateTo('/traps')"
+            label="Уничтожить"
+            :loading="Boolean(store.actionPending)"
+            :disabled="!store.canManage || Boolean(store.actionPending)"
+            @click="confirmDestroy"
           />
         </div>
       </template>
     </UModal>
   </div>
 
-  <div v-else class="flex flex-col items-center gap-4 py-20 text-center">
+  <div v-else-if="store.loaded" class="flex flex-col items-center gap-4 py-20 text-center">
     <div
       class="flex size-12 items-center justify-center rounded-lg border border-default bg-elevated"
     >

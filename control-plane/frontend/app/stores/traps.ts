@@ -1,22 +1,21 @@
 import { defineStore } from "pinia";
 import type {
   ServiceKey,
-  Trap,
+  DeploymentTrap as Trap,
   TrapFieldKey,
   TrapLevel,
   TrapSort,
 } from "~/types/traps";
 import {
-  AGENT_BY_ID,
   LEVEL_BY_KEY,
-  PROFILES,
-  PROFILE_BY_ID,
   TRAP_FIELDS,
-  seedTraps,
 } from "~/utils/traps";
-import { createId } from "~/utils/schema";
+import { resources } from "~/api/resources";
+import { toApiError } from "~/api/errors";
+import { clearCache } from "~/api/cache";
+import type { DeploymentCreate, DeploymentRead, DeploymentAction } from "~/types/api";
+import type { TrapProfile } from "~/types/traps";
 
-const TRAPS_KEY = "honeypotforge:traps";
 const FIELDS_KEY = "honeypotforge:trap-fields";
 
 function isClient() {
@@ -62,21 +61,15 @@ function levelWeight(level: TrapLevel) {
 function compare(a: Trap, b: Trap, field: TrapSort["field"]) {
   switch (field) {
     case "profile":
-      return (PROFILE_BY_ID[a.profileId]?.name ?? "").localeCompare(
-        PROFILE_BY_ID[b.profileId]?.name ?? "",
-        "ru",
-      );
+      return a.profileId.localeCompare(b.profileId, "ru");
     case "port":
       return (a.services[0]?.port ?? 0) - (b.services[0]?.port ?? 0);
     case "level":
       return levelWeight(a.level) - levelWeight(b.level);
     case "agent":
-      return (AGENT_BY_ID[a.agentId]?.name ?? "").localeCompare(
-        AGENT_BY_ID[b.agentId]?.name ?? "",
-        "ru",
-      );
+      return a.agentId.localeCompare(b.agentId, "ru");
     case "events":
-      return a.eventsCount - b.eventsCount;
+      return (a.eventsCount ?? 0) - (b.eventsCount ?? 0);
     case "createdAt":
       return Date.parse(a.createdAt) - Date.parse(b.createdAt);
     case "services":
@@ -86,22 +79,24 @@ function compare(a: Trap, b: Trap, field: TrapSort["field"]) {
   }
 }
 
-export interface CreateTrapInput {
-  profileId: string;
-  name: string;
-  description: string;
-  services: { key: ServiceKey; port: number }[];
-  level: TrapLevel;
-  agentId: string;
-  agentStatus: "online" | "syncing";
-}
+export type CreateTrapInput = DeploymentCreate;
 
 export const useTrapsStore = defineStore("traps", () => {
-  const traps = ref<Trap[]>(seedTraps());
+  const auth = useAuthStore();
+  const agentsStore = useAgentsStore();
+  const traps = ref<Trap[]>([]);
+  const profiles = ref<TrapProfile[]>([]);
+  const pending = ref(false);
+  const loaded = ref(false);
+  const error = ref<string | null>(null);
+  const catalogueError = ref<string | null>(null);
+  const actionError = ref<string | null>(null);
+  const actionPending = ref<string | null>(null);
+  const canManage = computed(() => auth.can("deployments:read") && auth.can("deployments:manage"));
   const fieldVisibility = ref<Record<TrapFieldKey, boolean>>(
     defaultVisibility(),
   );
-  const serviceVisibility = ref<Record<ServiceKey, boolean>>({
+  const serviceVisibility = ref<Record<string, boolean>>({
     ssh: true,
     http: true,
     smtp: true,
@@ -114,7 +109,7 @@ export const useTrapsStore = defineStore("traps", () => {
   const search = ref("");
   const levelFilter = ref<"all" | TrapLevel>("all");
   const agentFilter = ref<"all" | Trap["agentStatus"]>("all");
-  const sort = ref<TrapSort>({ field: "events", direction: "desc" });
+  const sort = ref<TrapSort>({ field: "createdAt", direction: "desc" });
   const pendingDeleteId = ref<string | null>(null);
 
   const visibleFields = computed(() =>
@@ -130,10 +125,9 @@ export const useTrapsStore = defineStore("traps", () => {
 
   const trapsByProfile = computed(
     () =>
-      PROFILES.map((profile) => ({
+      profiles.value.map((profile) => ({
         profile,
-        count: traps.value.filter((trap) => trap.profileId === profile.id)
-          .length,
+        count: loaded.value ? traps.value.filter((trap) => trap.profileId === profile.id).length : null,
       })),
   );
 
@@ -148,13 +142,13 @@ export const useTrapsStore = defineStore("traps", () => {
 
       if (!query) return true;
 
-      const profile = PROFILE_BY_ID[trap.profileId];
+      const profile = profiles.value.find((item) => item.id === trap.profileId);
       const haystack = [
         trap.name,
         trap.id,
         trap.description,
         profile?.name ?? "",
-        AGENT_BY_ID[trap.agentId]?.name ?? "",
+        trap.agentId,
         ...trap.services.map((service) => `${service.key} ${service.port}`),
       ]
         .join(" ")
@@ -172,26 +166,117 @@ export const useTrapsStore = defineStore("traps", () => {
     () => traps.value.find((trap) => trap.id === pendingDeleteId.value) ?? null,
   );
 
-  const totalEvents = computed(() =>
-    traps.value.reduce((sum, trap) => sum + trap.eventsCount, 0),
-  );
+  const totalEvents = computed(() => null);
 
   const onlineCount = computed(
-    () => traps.value.filter((trap) => trap.agentStatus === "online").length,
+    () => agentsStore.onlineCount,
   );
 
-  function load() {
-    const stored = readJson<Trap[]>(TRAPS_KEY, []);
+  function mapDeployment(item: DeploymentRead): Trap {
+    const listen = typeof item.config.listen === "string" ? item.config.listen : "";
+    const port = Number(listen.split(":").pop());
+    const agent = agentsStore.agents.find((entry) => entry.agent_id === item.agent_id);
+    return {
+      id: item.id, name: item.name, profileId: item.honeypot_type,
+      description: item.last_error ?? "",
+      services: item.level === "high" ? [] : [{
+        key: item.honeypot_type.replace(/-(low|mid)$/, ""),
+        port: listen.includes(":") && Number.isInteger(port) && port > 0 && port <= 65535 ? port : null,
+      }],
+      level: item.level as TrapLevel,
+      agentId: item.agent_id,
+      agentStatus: agent ? (agent.online ? "online" : "offline") : "unknown",
+      eventsCount: null, events: [], createdAt: item.created_at,
+      desiredState: item.desired_state, observedState: item.observed_state, lastError: item.last_error,
+    };
+  }
 
-    traps.value = stored.length ? stored : seedTraps();
+  let inflight: Promise<void> | null = null;
+  let generation = 0;
+  watch(() => [auth.user, auth.can("deployments:read"), auth.can("deployments:manage"), auth.can("agents:read")], () => {
+    generation++;
+    // Forced GETs still deduplicate across callers unless the shared cache is cleared.
+    clearCache();
+    inflight = null;
+    traps.value = [];
+    profiles.value = [];
+    pending.value = false;
+    loaded.value = false;
+    error.value = null;
+    catalogueError.value = null;
+    actionError.value = null;
+    actionPending.value = null;
+    pendingDeleteId.value = null;
+  }, { flush: "sync" });
+
+  async function loadCatalogue() {
+    const request = generation;
+    profiles.value = [];
+    catalogueError.value = null;
+    if (!auth.can("deployments:read")) {
+      catalogueError.value = "Нет права deployments:read";
+      return;
+    }
+    try {
+      const items = await resources.honeypotTypes.list({ cache: { force: true, swr: false, persist: false } });
+      if (request !== generation) return;
+      profiles.value = items.filter((item) => typeof item.slug === "string").map((item) => ({
+        id: String(item.slug), name: String(item.name ?? item.slug),
+        description: typeof item.description === "string" ? item.description : String(item.driver ?? ""),
+        icon: "i-lucide-radar", level: item.level as TrapLevel,
+        tags: [String(item.driver ?? "")], services: [],
+        configSchema: item.config_schema as Record<string, unknown> | undefined,
+      }));
+    } catch (err) {
+      if (request !== generation) return;
+      profiles.value = [];
+      catalogueError.value = toApiError(err).message;
+    }
+  }
+
+  function load(): Promise<void> {
+    if (inflight) return inflight;
     fieldVisibility.value = {
       ...defaultVisibility(),
       ...readJson<Partial<Record<TrapFieldKey, boolean>>>(FIELDS_KEY, {}),
     };
+    traps.value = [];
+    error.value = null;
+    loaded.value = false;
+    pending.value = true;
+    const request = generation;
+    inflight = (async () => {
+      try {
+        await Promise.all([loadCatalogue(), agentsStore.load()]);
+        if (request !== generation) return;
+        if (!auth.can("deployments:read")) {
+          error.value = "Нет права deployments:read";
+          return;
+        }
+        const rows: DeploymentRead[] = [];
+        for (let offset = 0; ; offset += 100) {
+          const page = await resources.deployments.list({ offset, limit: 100 }, { cache: { force: true, swr: false, persist: false } });
+          if (request !== generation) return;
+          rows.push(...page);
+          if (page.length < 100) break;
+        }
+        traps.value = rows.map(mapDeployment);
+        loaded.value = true;
+      } catch (err) {
+        if (request !== generation) return;
+        traps.value = [];
+        error.value = toApiError(err).message;
+      } finally {
+        if (request === generation) {
+          pending.value = false;
+          inflight = null;
+        }
+      }
+    })();
+    return inflight;
   }
 
   function persist() {
-    writeJson(TRAPS_KEY, traps.value);
     writeJson(FIELDS_KEY, fieldVisibility.value);
   }
 
@@ -264,57 +349,71 @@ export const useTrapsStore = defineStore("traps", () => {
     serviceVisibility.value[key] = !serviceVisibility.value[key];
   }
 
-  function createTrap(input: CreateTrapInput) {
-    const profile = PROFILE_BY_ID[input.profileId];
-
-    const created: Trap = {
-      id: createId("trap"),
-      name: input.name.trim() || profile?.name || "новая ловушка",
-      profileId: input.profileId,
-      description: input.description.trim(),
-      services: input.services
-        .filter((service) => service.port > 0)
-        .map((service) => ({ ...service })),
-      level: input.level,
-      agentId: input.agentId,
-      agentStatus: input.agentStatus,
-      eventsCount: 0,
-      events: [],
-      createdAt: new Date().toISOString(),
-    };
-
-    traps.value = [created, ...traps.value];
-    persist();
-
-    return created;
+  async function createTrap(input: CreateTrapInput) {
+    if (!canManage.value) {
+      actionError.value = "Нужны права deployments:read и deployments:manage";
+      return null;
+    }
+    if (actionPending.value) return null;
+    const request = generation;
+    actionPending.value = "create";
+    actionError.value = null;
+    try {
+      const row = await resources.deployments.create(input);
+      if (request !== generation) return null;
+      const created = mapDeployment(row);
+      traps.value = [created, ...traps.value];
+      return created;
+    } catch (err) {
+      if (request !== generation) return null;
+      actionError.value = toApiError(err).message;
+      return null;
+    } finally {
+      if (request === generation) actionPending.value = null;
+    }
   }
 
-  function setAgentStatus(id: string, status: Trap["agentStatus"]) {
-    const trap = getTrap(id);
-
-    if (!trap) return;
-
-    trap.agentStatus = status;
-    persist();
+  async function runAction(id: string, action: DeploymentAction) {
+    if (!canManage.value) {
+      actionError.value = "Нужны права deployments:read и deployments:manage";
+      return null;
+    }
+    if (actionPending.value) return null;
+    const request = generation;
+    actionPending.value = id;
+    actionError.value = null;
+    try {
+      const row = await resources.deployments.action(id, action);
+      if (request !== generation) return null;
+      const updated = mapDeployment(row);
+      traps.value = traps.value.map((trap) => trap.id === id ? updated : trap);
+      return updated;
+    } catch (err) {
+      if (request !== generation) return null;
+      actionError.value = toApiError(err).message;
+      return null;
+    } finally {
+      if (request === generation) actionPending.value = null;
+    }
   }
 
   function requestDelete(id: string) {
+    if (!canManage.value) return;
+    actionError.value = null;
     pendingDeleteId.value = id;
   }
   function cancelDelete() {
     pendingDeleteId.value = null;
   }
 
-  function confirmDelete() {
+  async function confirmDelete() {
     if (!pendingDeleteId.value) return null;
 
-    const removed = getTrap(pendingDeleteId.value);
-
-    traps.value = traps.value.filter((trap) => trap.id !== pendingDeleteId.value);
-    pendingDeleteId.value = null;
-    persist();
-
-    return removed ?? null;
+    const request = generation;
+    const updated = await runAction(pendingDeleteId.value, "destroy");
+    if (request !== generation) return null;
+    if (updated) pendingDeleteId.value = null;
+    return updated;
   }
 
   function levelInfo(level: TrapLevel) {
@@ -323,6 +422,16 @@ export const useTrapsStore = defineStore("traps", () => {
 
   return {
     traps,
+    profiles,
+    pending,
+    loaded,
+    error,
+    catalogueError,
+    actionError,
+    actionPending,
+    canManage,
+    loadCatalogue,
+    runAction,
     fieldVisibility,
     serviceVisibility,
     search,
@@ -352,7 +461,6 @@ export const useTrapsStore = defineStore("traps", () => {
     setServiceVisibility,
     toggleServiceVisibility,
     createTrap,
-    setAgentStatus,
     requestDelete,
     cancelDelete,
     confirmDelete,

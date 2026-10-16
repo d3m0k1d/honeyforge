@@ -1,5 +1,5 @@
 <script setup lang="ts">
-definePageMeta({ permission: "profiles:read" });
+definePageMeta({ permission: "deployments:read" });
 
 import type { TrapProfile } from "~/types/traps";
 
@@ -47,22 +47,25 @@ function onCreate(trapId: string) {
           Профили ловушек
         </h1>
         <p class="mt-1 max-w-2xl text-sm text-muted">
-          Готовые шаблоны honeypot-сервисов. Выберите профиль, задайте порты,
-          уровень эмуляции и агент — ловушка будет создана автоматически.
+          Типы ловушек из API. Выберите тип, агент и конфигурацию JSON.
         </p>
       </div>
 
       <UBadge color="neutral" variant="outline" size="lg">
-        профилей: {{ cards.length }}
+        профилей: {{ store.pending || store.catalogueError ? '—' : cards.length }}
       </UBadge>
     </div>
 
-    <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <UAlert v-if="store.catalogueError" color="error" :description="store.catalogueError" />
+    <UButton label="Обновить" variant="outline" class="self-start" :loading="store.pending" @click="store.load()" />
+    <p v-if="store.pending" role="status" class="text-sm text-muted">Загрузка каталога…</p>
+    <p v-else-if="!store.catalogueError && !cards.length" class="text-sm text-muted">Каталог пуст</p>
+    <div v-if="!store.pending && !store.catalogueError" class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <TrapProfileCard
         v-for="card in cards"
         :key="card.profile.id"
         :profile="card.profile"
-        :count="card.count"
+        :count="store.loaded ? card.count : null"
         @configure="configure"
       />
     </div>

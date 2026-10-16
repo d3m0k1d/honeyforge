@@ -1,10 +1,4 @@
 <script setup lang="ts">
-import type {
-  ServiceKey,
-  TrapEventAction,
-  TrapEventSeverity,
-} from "~/types/traps";
-import { ACTION_LABELS, SEVERITY_LABELS, SERVICES } from "~/utils/traps";
 import { exportData } from "~/utils/export";
 import { PERIODS } from "~/stores/analytics";
 
@@ -13,29 +7,13 @@ const toast = useToast();
 
 const allOption = { label: "Все", value: "all" };
 
-const serviceItems = [
+const options = (values: string[]) => [
   allOption,
-  ...SERVICES.map((service) => ({
-    label: service.label,
-    value: service.key,
-  })),
+  ...[...new Set(values)].sort().map((value) => ({ label: value, value })),
 ];
-
-const actionItems = [
-  allOption,
-  ...Object.entries(ACTION_LABELS).map(([key, label]) => ({
-    label,
-    value: key,
-  })),
-];
-
-const severityItems = [
-  allOption,
-  ...Object.entries(SEVERITY_LABELS).map(([key, label]) => ({
-    label,
-    value: key,
-  })),
-];
+const serviceItems = computed(() => options(store.baseEvents.map((event) => event.service)));
+const actionItems = computed(() => options(store.baseEvents.map((event) => event.action)));
+const severityItems = computed(() => options(store.baseEvents.map((event) => event.severity)));
 
 const periodItems = PERIODS.map((item) => ({
   label: item.label,
@@ -84,18 +62,16 @@ const exportItems = computed(() => [
 const exportEmpty = computed(() => store.sortedEvents.length === 0);
 
 function runExport(format: "csv" | "tsv" | "txt" | "json" | "xml" | "xls") {
-  const base = store.activeTrap
-    ? `events-${store.activeTrap.name}`
-    : "events-all";
+  const base = "events-latest-filtered";
 
   exportData(
     store.sortedEvents,
     [
       { key: "ts", label: "Время", value: (row) => row.ts },
       { key: "source", label: "IP атакующего", value: (row) => row.source },
-      { key: "trap", label: "Ловушка", value: (row) => row.trapName },
+      { key: "agent_id", label: "Agent ID", value: (row) => row.agent_id },
       { key: "service", label: "Протокол", value: (row) => row.service },
-      { key: "port", label: "Порт", value: (row) => row.port },
+      { key: "port", label: "Порт", value: (row) => row.port ?? "" },
       { key: "action", label: "Действие", value: (row) => row.action },
       { key: "severity", label: "Приоритет", value: (row) => row.severity },
       { key: "message", label: "Сообщение", value: (row) => row.message },
@@ -119,27 +95,30 @@ function runExport(format: "csv" | "tsv" | "txt" | "json" | "xml" | "xls") {
     data-radial-ignore
   >
     <USelect
-      :model-value="store.trapId ?? 'all'"
-      :items="[{ label: 'Все ловушки', value: 'all' }, ...store.trapOptions]"
+      :model-value="store.agentId ?? 'all'"
+      :items="[{ label: 'Все агенты', value: 'all' }, ...store.agentOptions]"
+      aria-label="Агент"
       icon="i-lucide-radar"
       class="w-52"
       :ui="{ leading: 'pointer-events-none' }"
-      @update:model-value="store.setTrap($event === 'all' ? null : ($event as string))"
+      @update:model-value="store.setAgent($event === 'all' ? null : String($event))"
     />
 
     <USelect
       :model-value="store.period"
       :items="periodItems"
+      aria-label="Период"
       icon="i-lucide-clock"
       class="w-48"
       :ui="{ leading: 'pointer-events-none' }"
-      @update:model-value="store.setPeriod($event as any)"
+      @update:model-value="store.setPeriod($event as typeof store.period)"
     />
 
     <UInput
       :model-value="store.search"
       icon="i-lucide-search"
       placeholder="IP, сообщение, действие…"
+      aria-label="Поиск по источнику и данным"
       class="min-w-48 flex-1"
       :ui="{ leading: 'pointer-events-none' }"
       @update:model-value="store.setSearch($event as string)"
@@ -148,28 +127,31 @@ function runExport(format: "csv" | "tsv" | "txt" | "json" | "xml" | "xls") {
     <USelect
       :model-value="store.serviceFilter"
       :items="serviceItems"
+      aria-label="Протокол"
       icon="i-lucide-globe"
       class="w-40"
       :ui="{ leading: 'pointer-events-none' }"
-      @update:model-value="store.setServiceFilter($event as ServiceKey | 'all')"
+      @update:model-value="store.setServiceFilter(String($event))"
     />
 
     <USelect
       :model-value="store.actionFilter"
       :items="actionItems"
+      aria-label="Тип события"
       icon="i-lucide-target"
       class="w-56"
       :ui="{ leading: 'pointer-events-none' }"
-      @update:model-value="store.setActionFilter($event as TrapEventAction | 'all')"
+      @update:model-value="store.setActionFilter(String($event))"
     />
 
     <USelect
       :model-value="store.severityFilter"
       :items="severityItems"
+      aria-label="Приоритет"
       icon="i-lucide-shield-alert"
       class="w-44"
       :ui="{ leading: 'pointer-events-none' }"
-      @update:model-value="store.setSeverityFilter($event as TrapEventSeverity | 'all')"
+      @update:model-value="store.setSeverityFilter(String($event))"
     />
 
     <UButton

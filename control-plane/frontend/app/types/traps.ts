@@ -46,6 +46,15 @@ export interface Trap {
   createdAt: string;
 }
 
+export interface DeploymentTrap extends Omit<Trap, "services" | "eventsCount" | "agentStatus"> {
+  services: { key: string; port: number | null }[];
+  eventsCount: number | null;
+  agentStatus: AgentStatusKey | "unknown";
+  desiredState: string;
+  observedState: string;
+  lastError: string | null;
+}
+
 export interface TrapAgent {
   id: string;
   name: string;
@@ -62,6 +71,7 @@ export interface TrapProfile {
   level: TrapLevel;
   tags: string[];
   services: TrapService[];
+  configSchema?: Record<string, unknown>;
 }
 
 export type TrapFieldKey =
