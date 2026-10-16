@@ -15,14 +15,16 @@ Already a pro? Just edit this README.md and make it your own. Want to make it ea
 
 ```
 cd existing_repo
+<<<<<<< README.md
 git remote add origin https://git.d3m0k1d.ru/hellreign/honeypotfroge.git
+=======
+git remote add origin https://git.d3m0k1d.ru/hellreign/honeypotforge.git
+>>>>>>> README.md
 git branch -M master
 git push -uf origin master
 ```
 
 ## Integrate with your tools
-
-* [Set up project integrations](https://git.d3m0k1d.ru/hellreign/honeypotfroge/-/settings/integrations)
 
 ## Collaborate with your team
 
