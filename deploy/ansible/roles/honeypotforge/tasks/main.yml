@@ -1,0 +1,167 @@
+---
+- name: Validate HoneypotForge deployment variables
+  ansible.builtin.assert:
+    that:
+      - honeypotforge_source_dir | length > 0
+      - honeypotforge_db_password | length >= 16
+      - honeypotforge_jwt_secret | length >= 32
+      - honeypotforge_agent_gateway_token | length >= 32
+      - honeypotforge_initial_admin_password | length >= 12
+    fail_msg: Set HONEYPOTFORGE_SOURCE_DIR and decrypt the web Vault variables.
+  no_log: true
+
+- name: Install deployment dependencies
+  ansible.builtin.apt:
+    name:
+      - rsync
+    state: present
+    update_cache: true
+
+- name: Create HoneypotForge project directory
+  ansible.builtin.file:
+    path: "{{ honeypotforge_project_dir }}"
+    state: directory
+    owner: "{{ honeypotforge_project_owner }}"
+    group: "{{ honeypotforge_project_group }}"
+    mode: "0750"
+
+- name: Synchronize HoneypotForge source tree
+  ansible.posix.synchronize:
+    src: "{{ honeypotforge_source_dir }}/"
+    dest: "{{ honeypotforge_project_dir }}/"
+    delete: true
+    recursive: true
+    rsync_opts:
+      - --exclude=.git/
+      - --exclude=.env
+      - --exclude=.ruff_cache/
+      - --exclude=.pytest_cache/
+      - --exclude=.venv/
+      - --exclude=__pycache__/
+      - --exclude=node_modules/
+      - --exclude=.nuxt/
+      - --exclude=.output/
+      - --exclude=qemu-images/
+  become: false
+
+- name: Render test frontend users
+  ansible.builtin.template:
+    src: frontend-users.json.j2
+    dest: "{{ honeypotforge_project_dir }}/control-plane/frontend/app/data/users.json"
+    owner: "{{ honeypotforge_project_owner }}"
+    group: "{{ honeypotforge_project_group }}"
+    mode: "0600"
+  no_log: true
+
+- name: Render HoneypotForge environment
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ honeypotforge_project_dir }}/.env"
+    owner: "{{ honeypotforge_project_owner }}"
+    group: "{{ honeypotforge_project_group }}"
+    mode: "0600"
+  no_log: true
+
+- name: Build and start HoneypotForge
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - up
+      - --detach
+      - --build
+      - --remove-orphans
+    chdir: "{{ honeypotforge_project_dir }}"
+  register: honeypotforge_compose_up
+  changed_when: >-
+    'Created' in honeypotforge_compose_up.stderr or
+    'Recreated' in honeypotforge_compose_up.stderr or
+    'Started' in honeypotforge_compose_up.stderr or
+    'Built' in honeypotforge_compose_up.stderr
+
+- name: Wait for the HoneypotForge API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ honeypotforge_api_port }}/health"
+    status_code: 200
+  register: honeypotforge_api_health
+  retries: 20
+  delay: 3
+  until: honeypotforge_api_health.status == 200
+
+- name: Create test API users
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ honeypotforge_api_port }}/auth/register"
+    method: POST
+    body_format: json
+    body:
+      email: "{{ item.email }}"
+      password: "{{ item.password }}"
+      first_name: "{{ item.first_name }}"
+      last_name: Test
+    status_code:
+      - 201
+      - 409
+  loop:
+    - email: "{{ honeypotforge_operator_email }}"
+      password: "{{ honeypotforge_operator_password }}"
+      first_name: Operator
+    - email: "{{ honeypotforge_viewer_email }}"
+      password: "{{ honeypotforge_viewer_password }}"
+      first_name: Viewer
+  no_log: true
+
+- name: Synchronize test API passwords
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - exec
+      - -T
+      - -e
+      - "TEST_EMAIL={{ item.email }}"
+      - -e
+      - "TEST_PASSWORD={{ item.password }}"
+      - api
+      - python
+      - -c
+      - |
+        import asyncio
+        import os
+        from sqlalchemy import select
+        from db.engine import async_session
+        from db.models import User
+        from modules.auth.security import hash_password
+        async def main():
+            async with async_session() as session:
+                user = await session.scalar(select(User).where(User.email == os.environ["TEST_EMAIL"]))
+                if user is None:
+                    raise RuntimeError("test user not found")
+                user.hashed_password = hash_password(os.environ["TEST_PASSWORD"])
+                await session.commit()
+        asyncio.run(main())
+    chdir: "{{ honeypotforge_project_dir }}"
+  loop:
+    - email: "{{ honeypotforge_initial_admin_email }}"
+      password: "{{ honeypotforge_initial_admin_password }}"
+    - email: "{{ honeypotforge_operator_email }}"
+      password: "{{ honeypotforge_operator_password }}"
+    - email: "{{ honeypotforge_viewer_email }}"
+      password: "{{ honeypotforge_viewer_password }}"
+  changed_when: true
+  no_log: true
+
+- name: Assign the operator role to the test operator
+  ansible.builtin.shell:
+    cmd: >-
+      docker compose exec -T postgres psql
+      -U {{ honeypotforge_db_user | quote }}
+      -d {{ honeypotforge_db_name | quote }}
+      -v ON_ERROR_STOP=1
+      -c "DELETE FROM user_roles WHERE user_id = (SELECT id FROM users WHERE email = '{{ honeypotforge_operator_email }}');
+      INSERT INTO user_roles (user_id, role_id)
+      SELECT users.id, roles.id FROM users CROSS JOIN roles
+      WHERE users.email = '{{ honeypotforge_operator_email }}' AND roles.name = 'operator'
+      ON CONFLICT DO NOTHING;"
+    chdir: "{{ honeypotforge_project_dir }}"
+  changed_when: true
+  no_log: true

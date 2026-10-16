@@ -1,0 +1,189 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* ══════════════════════════════════════════════════════════
+   ШРИФТЫ (self-hosted, latin + cyrillic)
+   ══════════════════════════════════════════════════════════ */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("@fontsource-variable/inter/files/inter-cyrillic-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url("@fontsource-variable/jetbrains-mono/files/jetbrains-mono-cyrillic-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* ══════════════════════════════════════════════════════════
+   ТИПОГРАФИКА
+   ══════════════════════════════════════════════════════════ */
+:root {
+  --font-sans:
+    "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  /* единая точка смены акцентного цвета приложения */
+  --brand-hue: 82deg;
+  --brand-chroma: 0.1;
+  --brand-chroma-dark: 0.085;
+}
+
+html {
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11" 1, "ss03" 1;
+}
+
+body {
+  letter-spacing: -0.006em;
+}
+
+.font-mono,
+code,
+kbd,
+samp,
+pre {
+  font-feature-settings: "zero" 1;
+  letter-spacing: -0.01em;
+}
+
+/* ══════════════════════════════════════════════════════════
+   ПАЛИТРА · светлая тема
+   ══════════════════════════════════════════════════════════ */
+:root:not(.dark) {
+  --ui-color-primary-50: oklch(97.5% calc(var(--brand-chroma) * 0.14) var(--brand-hue));
+  --ui-color-primary-100: oklch(94.5% calc(var(--brand-chroma) * 0.32) var(--brand-hue));
+  --ui-color-primary-200: oklch(89.5% calc(var(--brand-chroma) * 0.52) var(--brand-hue));
+  --ui-color-primary-300: oklch(82% calc(var(--brand-chroma) * 0.75) var(--brand-hue));
+  --ui-color-primary-400: oklch(74% calc(var(--brand-chroma) * 0.97) var(--brand-hue));
+  --ui-color-primary-500: oklch(66% var(--brand-chroma) var(--brand-hue));
+  --ui-color-primary-600: oklch(56% calc(var(--brand-chroma) * 0.94) var(--brand-hue));
+  --ui-color-primary-700: oklch(47% calc(var(--brand-chroma) * 0.84) var(--brand-hue));
+  --ui-color-primary-800: oklch(39% calc(var(--brand-chroma) * 0.68) var(--brand-hue));
+  --ui-color-primary-900: oklch(32% calc(var(--brand-chroma) * 0.5) var(--brand-hue));
+  --ui-color-primary-950: oklch(23% calc(var(--brand-chroma) * 0.36) var(--brand-hue));
+
+  --ui-primary: oklch(66% var(--brand-chroma) var(--brand-hue));
+
+  --ui-bg: #f7f6f4;
+  --ui-bg-muted: #efeeeb;
+  --ui-bg-elevated: #ffffff;
+  --ui-bg-accented: #e4e2dd;
+  --ui-bg-inverted: #1b1913;
+
+  --ui-text-dimmed: #a3a19c;
+  --ui-text-muted: #77756f;
+  --ui-text-toned: #514f49;
+  --ui-text: #3a3833;
+  --ui-text-highlighted: #171613;
+  --ui-text-inverted: #fbfaf7;
+
+  --ui-border: #e5e3de;
+  --ui-border-muted: #eceae5;
+  --ui-border-accented: #d6d3cb;
+  --ui-border-inverted: #171613;
+}
+
+/* ══════════════════════════════════════════════════════════
+   ПАЛИТРА · тёмная тема
+   ══════════════════════════════════════════════════════════ */
+.dark {
+  --ui-color-primary-50: oklch(21% calc(var(--brand-chroma-dark) * 0.35) var(--brand-hue));
+  --ui-color-primary-100: oklch(26% calc(var(--brand-chroma-dark) * 0.47) var(--brand-hue));
+  --ui-color-primary-200: oklch(32% calc(var(--brand-chroma-dark) * 0.59) var(--brand-hue));
+  --ui-color-primary-300: oklch(40% calc(var(--brand-chroma-dark) * 0.71) var(--brand-hue));
+  --ui-color-primary-400: oklch(50% calc(var(--brand-chroma-dark) * 0.88) var(--brand-hue));
+  --ui-color-primary-500: oklch(62% var(--brand-chroma-dark) var(--brand-hue));
+  --ui-color-primary-600: oklch(72% calc(var(--brand-chroma-dark) * 0.95) var(--brand-hue));
+  --ui-color-primary-700: oklch(80% calc(var(--brand-chroma-dark) * 0.85) var(--brand-hue));
+  --ui-color-primary-800: oklch(87% calc(var(--brand-chroma-dark) * 0.68) var(--brand-hue));
+  --ui-color-primary-900: oklch(92% calc(var(--brand-chroma-dark) * 0.47) var(--brand-hue));
+  --ui-color-primary-950: oklch(97% calc(var(--brand-chroma-dark) * 0.26) var(--brand-hue));
+
+  --ui-primary: oklch(76% calc(var(--brand-chroma-dark) * 1.05) var(--brand-hue));
+
+  --ui-bg: #12110d;
+  --ui-bg-muted: #1a1815;
+  --ui-bg-elevated: #211f1a;
+  --ui-bg-accented: #2b2823;
+  --ui-bg-inverted: #f5f3ee;
+
+  --ui-text-dimmed: #7d7a71;
+  --ui-text-muted: #9c988d;
+  --ui-text-toned: #bab5a8;
+  --ui-text: #ddd8cd;
+  --ui-text-highlighted: #f7f5ef;
+  --ui-text-inverted: #171613;
+
+  --ui-border: #2b2823;
+  --ui-border-muted: #262420;
+  --ui-border-accented: #3a3730;
+  --ui-border-inverted: #f7f5ef;
+}
+
+/* ══════════════════════════════════════════════════════════
+   УТИЛИТЫ
+   ══════════════════════════════════════════════════════════ */
+@utility text-eyebrow {
+  @apply text-xs font-medium uppercase tracking-[0.16em] text-muted;
+}
+
+/* ══════════════════════════════════════════════════════════
+   ЗАГРУЗОЧНЫЙ ЭКРАН
+   ══════════════════════════════════════════════════════════ */
+.boot-enter-active {
+  transition: opacity 0.45s ease;
+}
+
+.boot-leave-active {
+  transition:
+    opacity 0.6s ease,
+    filter 0.6s ease,
+    transform 0.6s ease;
+}
+
+.boot-enter-from,
+.boot-leave-to {
+  opacity: 0;
+}
+
+.boot-leave-to {
+  transform: scale(1.03);
+  filter: blur(8px);
+}

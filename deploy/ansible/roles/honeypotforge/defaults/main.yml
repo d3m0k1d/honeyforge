@@ -1,0 +1,12 @@
+---
+honeypotforge_project_dir: /home/d3m0k1d/honeypotforge
+honeypotforge_project_owner: d3m0k1d
+honeypotforge_project_group: d3m0k1d
+honeypotforge_source_dir: "{{ lookup('env', 'HONEYPOTFORGE_SOURCE_DIR') }}"
+honeypotforge_public_url: https://test.d3m0k1d.ru
+honeypotforge_frontend_base_url: /
+honeypotforge_frontend_port: 8082
+honeypotforge_api_port: 8081
+honeypotforge_agent_mtls_port: 8443
+honeypotforge_control_https_port: 8444
+honeypotforge_server_ip: 192.168.31.73

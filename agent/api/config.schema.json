@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git.d3m0k1d.ru/hellreign/honeypotfroge/-/raw/master/agent/api/config.schema.json",
+  "title": "HoneypotForge agent config",
+  "description": "Документ конфигурации агента-ловушки. Агент принимает его из файла или с API по URL (-config): эндпоинт GET должен отдавать ровно этот JSON.",
+  "type": "object",
+  "required": ["version", "services"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "log": {
+      "type": "object",
+      "properties": {
+        "output": { "type": "string", "description": "stdout (по умолчанию) или путь к файлу журнала событий" }
+      }
+    },
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/service" }
+    }
+  },
+  "$defs": {
+    "service": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "description": "Один из встроенных типов (см. --list) или \"line\"" },
+        "name": { "type": "string", "description": "Имя сервиса в событиях; по умолчанию равно type" },
+        "level": { "type": "string", "enum": ["low", "medium", "high"], "description": "Уровень ловушки; low — только баннер, medium — логика, high — расширенный сбор ввода" },
+        "listen": { "type": "string", "examples": [":2222", "127.0.0.1:9099"], "description": "Адрес прослушивания; по умолчанию стандартный порт типа" },
+        "tls_cert": { "type": "string", "description": "Сертификат для TLS-сервиса" },
+        "tls_key": { "type": "string", "description": "Ключ для TLS-сервиса" },
+        "max_conns": { "type": "integer", "minimum": 1, "description": "Лимит одновременных соединений" },
+        "idle_timeout": { "type": "string", "description": "Таймаут молчащего соединения, например \"30s\"" },
+        "delay": { "type": "string", "description": "Базовая задержка ответа" },
+        "jitter": { "type": "string", "description": "Случайная добавка к задержке" },
+        "initial_delay": { "type": "string", "description": "Задержка перед первым ответом" },
+        "log_input": { "type": "boolean", "description": "Журналировать каждый входящий запрос" },
+        "params": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Параметры встроенного профиля: banner, server, hostname, pasv_ip, requirepass, ..."
+        },
+        "greeting": { "type": "string", "description": "Баннер (для type=line или переопределения встроенного)" },
+        "rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" },
+          "description": "Правила поведения; для line описывают сервис целиком, для встроенных — дополняют профиль"
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "Имя события при срабатывании" },
+        "pattern": { "type": "string", "description": "Regexp по строке запроса; пустой — catch-all" },
+        "response": { "type": "string", "description": "Ответ с \\r \\n \\t \\0 \\xHH и подстановками {capture}" },
+        "delay": { "type": "string" },
+        "jitter": { "type": "string" },
+        "capture": { "type": "array", "items": { "type": "string" }, "description": "Имена позиционных групп для подстановок и событий" },
+        "on": { "type": "string", "description": "Состояние сессии, при котором правило активно" },
+        "set_state": { "type": "string" },
+        "clear_state": { "type": "boolean" },
+        "event": { "type": "string", "description": "Имя события; auth — учётные данные" }
+      }
+    }
+  }
+}
